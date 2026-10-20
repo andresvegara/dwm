@@ -1817,6 +1817,8 @@ spawn(const Arg *arg)
 {
 	struct sigaction sa;
 	pid_t pid;
+	char **argv;
+	size_t n;
 
 	if (arg->v == dmenucmd)
 		snprintf(dmenumon, sizeof(dmenumon), "%d", selmon->num);
@@ -1835,8 +1837,16 @@ spawn(const Arg *arg)
 		sa.sa_handler = SIG_DFL;
 		sigaction(SIGCHLD, &sa, NULL);
 
-		execvp(((char **)arg->v)[0], (char **)arg->v);
-		die("dwm: execvp '%s' failed:", ((char **)arg->v)[0]);
+		for (n = 0; ((char **)arg->v)[n]; n++);
+		argv = ecalloc(n + 3, sizeof *argv);
+		argv[0] = "wm-run";
+		argv[1] = "--";
+		memcpy(argv + 2, arg->v, (n + 1) * sizeof *argv);
+		execvp(argv[0], argv);
+		fprintf(stderr, "dwm: execvp wm-run failed: %s\n", strerror(errno));
+		execlp("xmessage", "xmessage", "-center", "-timeout", "15",
+			"wm: no se pudo iniciar wm-run. Ejecuta el instalador de wm.", (char *)NULL);
+		die("dwm: launch error could not be displayed:");
 	}
 }
 
