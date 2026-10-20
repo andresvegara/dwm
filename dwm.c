@@ -620,13 +620,14 @@ configurenotify(XEvent *e)
 	Monitor *m;
 	Client *c;
 	XConfigureEvent *ev = &e->xconfigure;
-	int dirty;
+	int dirty, pending;
 
 	/* TODO: updategeom handling sucks, needs to be simplified */
 	if (ev->window == root) {
 		if (ev->width <= 0 || ev->height <= 0)
 			return;
 
+		pending = setuppending;
 		beginwindowsetup();
 		dirty = (sw != ev->width || sh != ev->height);
 		sw = ev->width;
@@ -642,7 +643,8 @@ configurenotify(XEvent *e)
 			}
 			focus(NULL);
 			arrange(NULL);
-		}
+		} else if (!pending)
+			setuppending = 0;
 	}
 }
 
