@@ -154,6 +154,7 @@ static void attach(Client *c);
 static void attachstack(Client *c);
 static void buttonpress(XEvent *e);
 static void centerclient(const Arg *arg);
+static void centerfloating(Client *c);
 static void checkotherwm(void);
 static void cleanup(void);
 static void cleanupmon(Monitor *mon);
@@ -484,6 +485,17 @@ centerclient(const Arg *arg)
 	m = c->mon;
 	resize(c, m->wx + (m->ww - WIDTH(c)) / 2,
 		m->wy + (m->wh - HEIGHT(c)) / 2, c->w, c->h, 0);
+}
+
+void
+centerfloating(Client *c)
+{
+	Monitor *m = c->mon;
+
+	if (!c->isfloating || c->isdock || c->isfullscreen)
+		return;
+	c->x = c->oldx = m->wx + MAX(0, (m->ww - WIDTH(c)) / 2);
+	c->y = c->oldy = m->wy + MAX(0, (m->wh - HEIGHT(c)) / 2);
 }
 
 void
@@ -1101,13 +1113,14 @@ manage(Window w, XWindowAttributes *wa)
 	wc.border_width = c->bw;
 	XConfigureWindow(dpy, w, CWBorderWidth, &wc);
 	XSetWindowBorder(dpy, w, scheme[SchemeNorm][ColBorder].pixel);
-	configure(c); /* propagates border_width, if size doesn't change */
 	updatesizehints(c);
 	updatewmhints(c);
 	XSelectInput(dpy, w, EnterWindowMask|FocusChangeMask|PropertyChangeMask|StructureNotifyMask);
 	grabbuttons(c, 0);
 	if (!c->isfloating)
 		c->isfloating = c->oldstate = trans != None || c->isfixed;
+	centerfloating(c);
+	configure(c); /* propagates border_width and initial position */
 	if (c->isfloating)
 		XRaiseWindow(dpy, c->win);
 	attach(c);
