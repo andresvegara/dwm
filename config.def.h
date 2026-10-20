@@ -47,11 +47,11 @@ static char dmenumon[8];
 static const char *dmenucmd[] = {
 	"wm-launcher", "-m", dmenumon, NULL
 };
-static const char *termcmd[] = { "jumpapp", "alacritty", NULL };
-static const char *browsercmd[] = { "jumpapp", "brave", NULL };
-static const char *chromiumcmd[] = { "jumpapp", "chromium", NULL };
-static const char *filescmd[] = { "jumpapp", "-f", "thunar", NULL };
-static const char *musiccmd[] = { "jumpapp", "spotify", NULL };
+static const char *termcmd[] = { "jumpapp", "-n", "alacritty", NULL };
+static const char *browsercmd[] = { "jumpapp", "-n", "brave", NULL };
+static const char *chromiumcmd[] = { "jumpapp", "-n", "chromium", NULL };
+static const char *filescmd[] = { "jumpapp", "-n", "-f", "thunar", NULL };
+static const char *musiccmd[] = { "jumpapp", "-n", "spotify", NULL };
 static const char *clipboardcmd[] = { "copyq", "show", NULL };
 static const char *playcmd[] = { "playerctl", "play-pause", NULL };
 static const char *pausecmd[] = { "playerctl", "pause", NULL };
