@@ -13,6 +13,8 @@ all: dwm
 
 ${OBJ}: config.h config.mk
 
+dwm.o: systray.c
+
 config.h:
 	cp config.def.h $@
 
@@ -25,7 +27,7 @@ clean:
 dist: clean
 	mkdir -p dwm-${VERSION}
 	cp -R LICENSE Makefile README config.def.h config.mk\
-		dwm.1 drw.h util.h ${SRC} dwm.png transient.c dwm-${VERSION}
+		dwm.1 drw.h util.h systray.c ${SRC} dwm.png transient.c dwm-${VERSION}
 	tar -cf dwm-${VERSION}.tar dwm-${VERSION}
 	gzip dwm-${VERSION}.tar
 	rm -rf dwm-${VERSION}
