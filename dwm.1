@@ -6,7 +6,9 @@ dwm \- floating X window manager for the wm environment
 .RB [ \-v ]
 .SH DESCRIPTION
 This configuration uses one tag and floating windows by default.
-Windows are focused by clicking, not by moving the pointer.
+Focus follows the pointer across normal windows and monitors, including empty
+monitor backgrounds. Docks never receive keyboard focus. Pointer focus does not
+raise or relocate existing windows; clicking still raises them.
 Keyboard placement affects only the focused window; it does not rearrange
 other windows into a tiled layout.
 .P
