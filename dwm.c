@@ -36,6 +36,7 @@
 #include <X11/Xlib.h>
 #include <X11/Xproto.h>
 #include <X11/Xutil.h>
+#include <X11/extensions/Xrandr.h>
 #ifdef XINERAMA
 #include <X11/extensions/Xinerama.h>
 #endif /* XINERAMA */
@@ -209,6 +210,8 @@ static void resize(Client *c, int x, int y, int w, int h, int interact);
 static void resizeclient(Client *c, int x, int y, int w, int h);
 static void resizemouse(const Arg *arg);
 static void restoregeometry(Client *c, const SavedGeometry *g);
+static void resizerequest(XEvent *e);
+static void selectionclear(XEvent *e);
 static void restack(Monitor *m);
 static void run(void);
 static void savewindowgeometry(void);
@@ -279,6 +282,8 @@ static void (*handler[LASTEvent]) (XEvent *) = {
 	[MapRequest] = maprequest,
 	[MotionNotify] = motionnotify,
 	[PropertyNotify] = propertynotify,
+	[ResizeRequest] = resizerequest,
+	[SelectionClear] = selectionclear,
 	[UnmapNotify] = unmapnotify
 };
 static Atom wmatom[WMLast], netatom[NetLast], windowsetupatom;
@@ -297,6 +302,8 @@ static Window root, wmcheckwin;
 
 /* compile-time check if all tags fit into an unsigned int bit array. */
 struct NumTags { char limitexceeded[LENGTH(tags) > 31 ? -1 : 1]; };
+
+#include "systray.c"
 
 /* function implementations */
 void
@@ -479,7 +486,7 @@ buttonpress(XEvent *e)
 			arg.ui = 1 << i;
 		} else if (ev->x < x + TEXTW(selmon->ltsymbol))
 			click = ClkLtSymbol;
-		else if (ev->x > selmon->ww - (int)TEXTW(stext) + lrpad - 2)
+		else if (selmon == statusmon && ev->x > selmon->ww - gettraywidth(selmon) - (int)TEXTW(stext) + lrpad - 2)
 			click = ClkStatusText;
 		else
 			click = ClkWinTitle;
@@ -546,6 +553,7 @@ cleanup(void)
 		while (m->stack)
 			unmanage(m->stack, 0);
 	XUngrabKey(dpy, AnyKey, AnyModifier, root);
+	cleanuptray();
 	while (mons)
 		cleanupmon(mons);
 	for (i = 0; i < CurLast; i++)
@@ -571,6 +579,12 @@ cleanupmon(Monitor *mon)
 		for (m = mons; m && m->next != mon; m = m->next);
 		m->next = mon->next;
 	}
+	if (traymon == mon) {
+		XReparentWindow(dpy, traywin, root, 0, 0);
+		traymon = NULL;
+	}
+	if (statusmon == mon)
+		statusmon = mons;
 	XUnmapWindow(dpy, mon->barwin);
 	XDestroyWindow(dpy, mon->barwin);
 	free(mon);
@@ -582,6 +596,11 @@ clientmessage(XEvent *e)
 	XClientMessageEvent *cme = &e->xclient;
 	Client *c = wintoclient(cme->window);
 
+	if (traywin && cme->window == traywin && cme->message_type == trayopcode) {
+		if (cme->format == 32 && cme->data.l[1] == 0)
+			docktrayicon(cme->data.l[2]);
+		return;
+	}
 	if (!c || c->isdock)
 		return;
 	if (cme->message_type == netatom[NetWMState]) {
@@ -645,6 +664,8 @@ configurenotify(XEvent *e)
 			arrange(NULL);
 		} else if (!pending)
 			setuppending = 0;
+		updateprimary();
+		drawbars();
 	}
 }
 
@@ -655,7 +676,15 @@ configurerequest(XEvent *e)
 	Monitor *m;
 	XConfigureRequestEvent *ev = &e->xconfigurerequest;
 	XWindowChanges wc;
+	TrayIcon *i = wintotrayicon(ev->window);
 
+	if (i) {
+		trayicongeom(i, ev->value_mask & CWWidth ? ev->width : i->w,
+			ev->value_mask & CWHeight ? ev->height : i->h);
+		updatesystray();
+		drawbars();
+		return;
+	}
 	if ((c = wintoclient(ev->window))) {
 		if (c->isdock) {
 			if (ev->value_mask & CWX) c->x = ev->x;
@@ -734,7 +763,14 @@ destroynotify(XEvent *e)
 {
 	Client *c;
 	XDestroyWindowEvent *ev = &e->xdestroywindow;
+	TrayIcon *i = wintotrayicon(ev->window);
 
+	if (i) {
+		removetrayicon(i, 1);
+		updatesystray();
+		drawbars();
+		return;
+	}
 	if ((c = wintoclient(ev->window)))
 		unmanage(c, 1);
 }
@@ -780,7 +816,7 @@ dirtomon(int dir)
 void
 drawbar(Monitor *m)
 {
-	int x, w, tw = 0;
+	int x, w, tw = 0, stw = gettraywidth(m);
 	int boxs = drw->fonts->h / 9;
 	int boxw = drw->fonts->h / 6 + 2;
 	unsigned int i, occ = 0, urg = 0;
@@ -790,10 +826,10 @@ drawbar(Monitor *m)
 		return;
 
 	/* draw status first so it can be overdrawn by tags later */
-	if (m == selmon) { /* status is only drawn on selected monitor */
+	if (m == statusmon) {
 		drw_setscheme(drw, scheme[SchemeNorm]);
-		tw = TEXTW(stext) - lrpad + 2; /* 2px right padding */
-		drw_text(drw, m->ww - tw, 0, tw, bh, 0, stext, 0);
+		tw = MIN(m->ww - stw, TEXTW(stext) - lrpad + 2);
+		drw_text(drw, m->ww - stw - tw, 0, tw, bh, 0, stext, 0);
 	}
 
 	for (c = m->clients; c; c = c->next) {
@@ -816,7 +852,7 @@ drawbar(Monitor *m)
 	drw_setscheme(drw, scheme[SchemeNorm]);
 	x = drw_text(drw, x, 0, w, bh, lrpad / 2, m->ltsymbol, 0);
 
-	if ((w = m->ww - tw - x) > bh) {
+	if ((w = m->ww - stw - tw - x) > bh) {
 		if (m->sel) {
 			drw_setscheme(drw, scheme[m == selmon ? SchemeSel : SchemeNorm]);
 			drw_text(drw, x, 0, w, bh, lrpad / 2, m->sel->name, 0);
@@ -1199,7 +1235,14 @@ maprequest(XEvent *e)
 {
 	static XWindowAttributes wa;
 	XMapRequestEvent *ev = &e->xmaprequest;
+	TrayIcon *i = wintotrayicon(ev->window);
 
+	if (i) {
+		trayiconstate(i);
+		updatesystray();
+		drawbars();
+		return;
+	}
 	if (!XGetWindowAttributes(dpy, ev->window, &wa) || wa.override_redirect)
 		return;
 	if (!wintoclient(ev->window))
@@ -1371,6 +1414,15 @@ propertynotify(XEvent *e)
 	Client *c;
 	Window trans;
 	XPropertyEvent *ev = &e->xproperty;
+	TrayIcon *i = wintotrayicon(ev->window);
+
+	if (i) {
+		if (ev->atom == xembedinfo)
+			trayiconstate(i);
+		updatesystray();
+		drawbars();
+		return;
+	}
 
 	if (ev->window == root && ev->atom == windowsetupatom) {
 		if (ev->state != PropertyDelete)
@@ -1548,8 +1600,11 @@ restack(Monitor *m)
 	XWindowChanges wc;
 
 	drawbar(m);
-	if (!m->sel)
+	if (!m->sel) {
+		if (m->showbar)
+			XRaiseWindow(dpy, m->barwin);
 		return;
+	}
 	if (m->sel->isfloating || !m->lt[m->sellt]->arrange)
 		XRaiseWindow(dpy, m->sel->win);
 	if (m->lt[m->sellt]->arrange) {
@@ -1564,6 +1619,8 @@ restack(Monitor *m)
 	for (c = m->clients; c; c = c->next)
 		if (c->isdock && ISVISIBLE(c))
 			XRaiseWindow(dpy, c->win);
+	if (m->showbar)
+		XRaiseWindow(dpy, m->barwin);
 	if (m->sel->isfullscreen)
 		XRaiseWindow(dpy, m->sel->win);
 	XSync(dpy, False);
@@ -1573,12 +1630,21 @@ restack(Monitor *m)
 void
 run(void)
 {
-	XEvent ev;
+	XEvent ev, configure;
 	/* main event loop */
 	XSync(dpy, False);
-	while (running && !XNextEvent(dpy, &ev))
-		if (handler[ev.type])
+	while (running && !XNextEvent(dpy, &ev)) {
+		if (randractive && (ev.type == randrevent + RRScreenChangeNotify
+		|| ev.type == randrevent + RRNotify)) {
+			XRRUpdateConfiguration(&ev);
+			configure = (XEvent){0};
+			configure.xconfigure.window = root;
+			configure.xconfigure.width = DisplayWidth(dpy, screen);
+			configure.xconfigure.height = DisplayHeight(dpy, screen);
+			configurenotify(&configure);
+		} else if (ev.type >= 0 && ev.type < LASTEvent && handler[ev.type])
 			handler[ev.type](&ev); /* call handler */
+	}
 }
 
 void
@@ -1783,7 +1849,7 @@ setmfact(const Arg *arg)
 void
 setup(void)
 {
-	int i;
+	int i, error, major = 1, minor = 3;
 	XSetWindowAttributes wa;
 	Atom utf8string;
 	struct sigaction sa;
@@ -1833,8 +1899,15 @@ setup(void)
 	scheme = ecalloc(LENGTH(colors), sizeof(Clr *));
 	for (i = 0; i < LENGTH(colors); i++)
 		scheme[i] = drw_scm_create(drw, colors[i], 3);
-	/* init bars */
+	randractive = XRRQueryExtension(dpy, &randrevent, &error)
+		&& XRRQueryVersion(dpy, &major, &minor)
+		&& (major > 1 || (major == 1 && minor >= 3));
+	if (randractive)
+		XRRSelectInput(dpy, root, RRScreenChangeNotifyMask|RRCrtcChangeNotifyMask|RROutputChangeNotifyMask);
+	/* init bars before embedding the tray */
 	updatebars();
+	updateprimary();
+	setuptray();
 	updatestatus();
 	/* supporting window for NetWMCheck */
 	wmcheckwin = XCreateSimpleWindow(dpy, root, 0, 0, 1, 1, 0, 0, 0);
@@ -2117,7 +2190,14 @@ unmapnotify(XEvent *e)
 {
 	Client *c;
 	XUnmapEvent *ev = &e->xunmap;
+	TrayIcon *i = wintotrayicon(ev->window);
 
+	if (i) {
+		trayiconstate(i);
+		updatesystray();
+		drawbars();
+		return;
+	}
 	if ((c = wintoclient(ev->window))) {
 		if (ev->send_event)
 			setclientstate(c, WithdrawnState);
@@ -2319,7 +2399,8 @@ updatestatus(void)
 {
 	if (!gettextprop(root, XA_WM_NAME, stext, sizeof(stext)))
 		strcpy(stext, "dwm-"VERSION);
-	drawbar(selmon);
+	if (statusmon)
+		drawbar(statusmon);
 }
 
 void
@@ -2461,6 +2542,8 @@ wintomon(Window w)
 	Client *c;
 	Monitor *m;
 
+	if (statusmon && (w == traywin || wintotrayicon(w)))
+		return statusmon;
 	if (w == root && getrootptr(&x, &y))
 		return recttomon(x, y, 1, 1);
 	for (m = mons; m; m = m->next)
