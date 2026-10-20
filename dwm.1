@@ -117,6 +117,11 @@ Move the window while dragging. Manual movement releases keyboard placement.
 .TP
 .B Super\-Button3
 Resize the window while dragging. Manual resizing releases keyboard placement.
+.SH LAUNCH ERRORS
+Commands started by bindings run through wm-run. Missing executables and early
+nonzero exits are shown through Dunst, with an xmessage fallback. Slow applications
+are left running; failures after the startup interval are not monitored.
+Jumpapp uses foreground launch mode so early startup errors remain observable.
 .SH CUSTOMIZATION
 Edit config.def.h before generating config.h, or edit an existing config.h,
 and recompile. There is no hot reload. Use the coordinator's make test to build
