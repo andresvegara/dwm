@@ -59,6 +59,8 @@
 /* enums */
 enum { CurNormal, CurResize, CurMove, CurLast }; /* cursor */
 enum { SchemeNorm, SchemeSel }; /* color schemes */
+enum { PlaceLeft = 1, PlaceRight = 2, PlaceTop = 4,
+       PlaceBottom = 8 }; /* window placement */
 enum { NetSupported, NetWMName, NetWMState, NetWMCheck,
        NetWMFullscreen, NetActiveWindow, NetWMWindowType,
        NetWMWindowTypeDialog, NetClientList, NetLast }; /* EWMH atoms */
@@ -88,6 +90,8 @@ struct Client {
 	float mina, maxa;
 	int x, y, w, h;
 	int oldx, oldy, oldw, oldh;
+	int floatx, floaty, floatw, floath;
+	unsigned int placement;
 	int basew, baseh, incw, inch, maxw, maxh, minw, minh, hintsvalid;
 	int bw, oldbw;
 	unsigned int tags;
@@ -184,6 +188,7 @@ static void monocle(Monitor *m);
 static void motionnotify(XEvent *e);
 static void movemouse(const Arg *arg);
 static Client *nexttiled(Client *c);
+static void placeclient(Client *c, unsigned int placement);
 static void pop(Client *c);
 static void propertynotify(XEvent *e);
 static void quit(const Arg *arg);
@@ -204,6 +209,7 @@ static void setmfact(const Arg *arg);
 static void setup(void);
 static void seturgent(Client *c, int urg);
 static void showhide(Client *c);
+static void snapclient(const Arg *arg);
 static void spawn(const Arg *arg);
 static void tag(const Arg *arg);
 static void tagmon(const Arg *arg);
@@ -1143,6 +1149,7 @@ movemouse(const Arg *arg)
 		XUngrabPointer(dpy, CurrentTime);
 		return;
 	}
+	c->placement = 0;
 	do {
 		XMaskEvent(dpy, MOUSEMASK|ExposureMask|SubstructureRedirectMask, &ev);
 		switch(ev.type) {
@@ -1187,6 +1194,53 @@ nexttiled(Client *c)
 {
 	for (; c && (c->isfloating || !ISVISIBLE(c)); c = c->next);
 	return c;
+}
+
+void
+placeclient(Client *c, unsigned int placement)
+{
+	Monitor *m = c->mon;
+	int x, y, w, h, left, top;
+
+	if (c->isfullscreen || c->isfixed
+	|| m->ww <= 2 * c->bw || m->wh <= 2 * c->bw)
+		return;
+	if (!c->placement && placement) {
+		c->floatx = c->x;
+		c->floaty = c->y;
+		c->floatw = c->w;
+		c->floath = c->h;
+	}
+	c->placement = placement;
+	if (!placement) {
+		w = MAX(1, MIN(c->floatw, m->ww - 2 * c->bw));
+		h = MAX(1, MIN(c->floath, m->wh - 2 * c->bw));
+		x = MAX(m->wx, MIN(c->floatx, m->wx + m->ww - w - 2 * c->bw));
+		y = MAX(m->wy, MIN(c->floaty, m->wy + m->wh - h - 2 * c->bw));
+	} else {
+		x = m->wx;
+		y = m->wy;
+		w = m->ww;
+		h = m->wh;
+		left = w / 2;
+		top = h / 2;
+		if (placement & PlaceLeft)
+			w = left;
+		else if (placement & PlaceRight) {
+			x += left;
+			w -= left;
+		}
+		if (placement & PlaceTop)
+			h = top;
+		else if (placement & PlaceBottom) {
+			y += top;
+			h -= top;
+		}
+		w = MAX(1, w - 2 * c->bw);
+		h = MAX(1, h - 2 * c->bw);
+	}
+	c->isfloating = 1;
+	resize(c, x, y, w, h, 0);
 }
 
 void
@@ -1297,6 +1351,7 @@ resizemouse(const Arg *arg)
 		None, cursor[CurResize]->cursor, CurrentTime) != GrabSuccess)
 		return;
 	XWarpPointer(dpy, None, c->win, 0, 0, 0, 0, c->w + c->bw - 1, c->h + c->bw - 1);
+	c->placement = 0;
 	do {
 		XMaskEvent(dpy, MOUSEMASK|ExposureMask|SubstructureRedirectMask, &ev);
 		switch(ev.type) {
@@ -1622,6 +1677,32 @@ showhide(Client *c)
 		showhide(c->snext);
 		XMoveWindow(dpy, c->win, WIDTH(c) * -2, c->y);
 	}
+}
+
+void
+snapclient(const Arg *arg)
+{
+	Client *c = selmon->sel;
+	unsigned int axis, placement;
+
+	if (!c || c->isfullscreen)
+		return;
+	switch (arg->ui) {
+	case PlaceLeft:
+	case PlaceRight:
+		axis = PlaceLeft | PlaceRight;
+		break;
+	case PlaceTop:
+	case PlaceBottom:
+		axis = PlaceTop | PlaceBottom;
+		break;
+	default:
+		return;
+	}
+	placement = c->placement;
+	placement = (placement & arg->ui) ? placement & ~axis
+		: (placement & ~axis) | arg->ui;
+	placeclient(c, placement);
 }
 
 void
