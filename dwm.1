@@ -10,7 +10,8 @@ Windows are focused by clicking, not by moving the pointer.
 Keyboard placement affects only the focused window; it does not rearrange
 other windows into a tiled layout.
 .P
-The status bar is disabled. Compact tray support belongs to a later wm block.
+The status bar is disabled. The wm session provides an external compact tray;
+dwm does not implement a tray or start session services itself.
 Borders indicate focus. Applications may request activation through
 _NET_ACTIVE_WINDOW; this permits external run-or-raise tools to focus windows.
 .SH OPTIONS
@@ -21,7 +22,8 @@ Print version information to stderr and exit.
 Super is the Windows key (Mod4). Alt is Mod1.
 .TP
 .B Super\-Space
-Run dmenu_run. The combined wm launcher is not implemented yet.
+Open wm-launcher: applications, file names and session actions through dmenu.
+Power and logout actions require confirmation in the launcher.
 .TP
 .B Super\-Return
 Open, raise or cycle st windows through jumpapp.
@@ -67,6 +69,37 @@ Focus the next or previous window in client-list order.
 .B Control\-q, Alt\-F4
 Request WM_DELETE_WINDOW on the focused window. The application handles
 confirmation and unsaved data. Clients without this protocol are not killed.
+.TP
+.B Super\-Home, AudioPlay
+Toggle media playback through playerctl. AudioPause pauses; AudioStop stops.
+The default playerctl player selection applies, not only Spotify.
+.TP
+.B Super\-Shift\-PageUp, AudioPrev
+Previous track.
+.TP
+.B Super\-Shift\-PageDown, AudioNext
+Next track.
+.TP
+.B Super\-PageUp, AudioRaiseVolume
+Raise the default audio output volume by 5%, limited to 100%, through wpctl.
+.TP
+.B Super\-PageDown, AudioLowerVolume
+Lower the default audio output volume by 5%. Adjusting volume does not unmute.
+.TP
+.B Super\-End, AudioMute
+Toggle mute on the default audio output through wpctl.
+.TP
+.B MonBrightnessUp, MonBrightnessDown
+Adjust the first backlight device by 5% through brightnessctl, with a minimum
+hardware value of 1. Requires backlight permissions; no external monitor DDC
+support is configured.
+.TP
+.B Print
+Open the interactive Flameshot capture UI. No automatic save is requested.
+.TP
+.B Super\-l
+Run wm-launcher --action Bloquear. The session's xss-lock/i3lock integration
+must be running; the shortcut alone does not provide a screen locker.
 .SH MOUSE
 .TP
 .B Button1
