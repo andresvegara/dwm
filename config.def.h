@@ -96,6 +96,7 @@ static const Key keys[] = {
 	{ MODKEY|ShiftMask,  XK_Right,     tagmon,           {.i = +1 } },
 	{ Mod1Mask,          XK_Tab,       focusstack,       {.i = +1 } },
 	{ Mod1Mask|ShiftMask,XK_Tab,       focusstack,       {.i = -1 } },
+	{ MODKEY,            XK_q,         killclient,       {0} },
 	{ ControlMask,       XK_q,         killclient,       {0} },
 	{ Mod1Mask,          XK_F4,        killclient,       {0} },
 	{ MODKEY,            XK_Home,      spawn,            {.v = playcmd } },
