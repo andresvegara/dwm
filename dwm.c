@@ -816,8 +816,27 @@ drawbars(void)
 void
 enternotify(XEvent *e)
 {
-	/* Pointer crossing does not change keyboard focus. */
-	(void)e;
+	Client *c;
+	Monitor *m;
+	XCrossingEvent *ev = &e->xcrossing;
+
+	if ((ev->mode != NotifyNormal || ev->detail == NotifyInferior) && ev->window != root)
+		return;
+	c = wintoclient(ev->window);
+	if (c)
+		m = c->mon;
+	else if (ev->window == root)
+		m = recttomon(ev->x_root, ev->y_root, 1, 1);
+	else
+		m = wintomon(ev->window);
+	if (c && c->isdock)
+		c = NULL;
+	if (m != selmon) {
+		unfocus(selmon->sel, 1);
+		selmon = m;
+	} else if (!c || c == selmon->sel)
+		return;
+	focus(c);
 }
 
 void
@@ -1179,8 +1198,17 @@ monocle(Monitor *m)
 void
 motionnotify(XEvent *e)
 {
-	/* Select monitors by click or keyboard, not pointer motion. */
-	(void)e;
+	Monitor *m;
+	XMotionEvent *ev = &e->xmotion;
+
+	if (ev->window != root)
+		return;
+	m = recttomon(ev->x_root, ev->y_root, 1, 1);
+	if (m != selmon) {
+		unfocus(selmon->sel, 1);
+		selmon = m;
+		focus(NULL);
+	}
 }
 
 void
