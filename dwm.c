@@ -153,6 +153,7 @@ static void arrangemon(Monitor *m);
 static void attach(Client *c);
 static void attachstack(Client *c);
 static void buttonpress(XEvent *e);
+static void centerclient(const Arg *arg);
 static void checkotherwm(void);
 static void cleanup(void);
 static void cleanupmon(Monitor *mon);
@@ -464,6 +465,21 @@ buttonpress(XEvent *e)
 		if (click == buttons[i].click && buttons[i].func && buttons[i].button == ev->button
 		&& CLEANMASK(buttons[i].mask) == CLEANMASK(ev->state))
 			buttons[i].func(click == ClkTagBar && buttons[i].arg.i == 0 ? &arg : &buttons[i].arg);
+}
+
+void
+centerclient(const Arg *arg)
+{
+	Client *c = selmon->sel;
+	Monitor *m;
+
+	if (!c || c->isfullscreen)
+		return;
+	if (c->placement)
+		placeclient(c, 0);
+	m = c->mon;
+	resize(c, m->wx + (m->ww - WIDTH(c)) / 2,
+		m->wy + (m->wh - HEIGHT(c)) / 2, c->w, c->h, 0);
 }
 
 void
