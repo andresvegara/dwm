@@ -1476,8 +1476,16 @@ scan(void)
 void
 sendmon(Client *c, Monitor *m)
 {
+	int dx, dy;
+
 	if (c->mon == m)
 		return;
+	dx = m->wx - c->mon->wx;
+	dy = m->wy - c->mon->wy;
+	c->floatx += dx;
+	c->floaty += dy;
+	c->fullx += dx;
+	c->fully += dy;
 	unfocus(c, 1);
 	detach(c);
 	detachstack(c);
@@ -1487,6 +1495,10 @@ sendmon(Client *c, Monitor *m)
 	attachstack(c);
 	if (c->isfullscreen)
 		resizeclient(c, m->mx, m->my, m->mw, m->mh);
+	else if (c->placement)
+		placeclient(c, c->placement);
+	else
+		resize(c, c->x + dx, c->y + dy, c->w, c->h, 0);
 	focus(NULL);
 	arrange(NULL);
 }
@@ -1769,9 +1781,15 @@ tag(const Arg *arg)
 void
 tagmon(const Arg *arg)
 {
-	if (!selmon->sel || !mons->next)
+	Client *c = selmon->sel;
+	Monitor *m;
+
+	if (!c || !mons->next)
 		return;
-	sendmon(selmon->sel, dirtomon(arg->i));
+	m = dirtomon(arg->i);
+	sendmon(c, m);
+	focus(c);
+	restack(m);
 }
 
 void
