@@ -526,8 +526,8 @@ clientmessage(XEvent *e)
 			setfullscreen(c, (cme->data.l[0] == 1 /* _NET_WM_STATE_ADD    */
 				|| (cme->data.l[0] == 2 /* _NET_WM_STATE_TOGGLE */ && !c->isfullscreen)));
 	} else if (cme->message_type == netatom[NetActiveWindow]) {
-		if (c != selmon->sel && !c->isurgent)
-			seturgent(c, 1);
+		focus(c);
+		restack(c->mon);
 	}
 }
 
@@ -781,13 +781,15 @@ expose(XEvent *e)
 void
 focus(Client *c)
 {
+	if (c && c->mon != selmon) {
+		unfocus(selmon->sel, 0);
+		selmon = c->mon;
+	}
 	if (!c || !ISVISIBLE(c))
 		for (c = selmon->stack; c && !ISVISIBLE(c); c = c->snext);
 	if (selmon->sel && selmon->sel != c)
 		unfocus(selmon->sel, 0);
 	if (c) {
-		if (c->mon != selmon)
-			selmon = c->mon;
 		if (c->isurgent)
 			seturgent(c, 0);
 		detachstack(c);
