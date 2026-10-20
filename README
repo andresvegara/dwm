@@ -3,6 +3,17 @@ dwm - dynamic window manager
 dwm is an extremely fast, small, and dynamic window manager for X.
 
 
+wm development configuration
+----------------------------
+This checkout is an unactivated customization. Use make test from the parent
+wm directory, not make install or startx. It uses one tag, floating windows,
+click-to-focus, per-window half/quarter placement, maximize/restore and ordinary
+close requests without killing unsupported clients. The manual documents the
+current bindings. Compact tray and full session integration are not ready.
+
+The upstream installation instructions below are retained for reference only;
+they are not the activation procedure for this environment.
+
 Requirements
 ------------
 In order to build dwm you need the Xlib header files.
