@@ -14,10 +14,23 @@ Super+End and Super+Shift+PageUp/PageDown media shortcuts. Session controls need
 playerctl, wpctl (WirePlumber), brightnessctl, Flameshot and wm-launcher. Commands
 use direct argument vectors; no shell or separate hotkey daemon is involved.
 
-The coordinator's docs/session.md describes the X11 session, external tray,
-launcher, dependencies, coexistence with Plasma and integration status. dwm does
-not start the compositor, tray, network applet or screen locker itself. Synthetic
-tests do not establish hardware, visual or authentication correctness.
+The native bar stays visible at the bottom of every monitor, reserving usable
+space; fullscreen windows may cover it. Status and the built-in XEmbed tray stay
+on the primary RandR monitor (first monitor fallback), not the focused monitor.
+The coordinator's docs/session.md describes the X11 session, snixembed SNI bridge,
+clock, launcher, dependencies and coexistence with Plasma. dwm does not start the
+compositor, bridge, network applet or screen locker itself. Synthetic tests do
+not establish hardware, visual or authentication correctness.
+
+The tray adapts the community suckless systray patch, including work by Jan
+Christoph Ebersbach, Eon S. Jeon and subsequent contributors; the inspected
+20260516 revision is by Bakkeby. The original diff, checksum and full provenance
+are retained in the coordinator's patches/upstream/dwm/ and patches/README.md.
+This version embeds the tray as a bar child, keeps icons separate from normal
+clients, bounds icon sizes, honors hidden icons and does not steal another tray.
+Native RandR events replace external panel polling/restarts. The private
+_WM_SYSTRAY root CARDINAL pair (dwm PID, tray window) signals successful ownership
+to the supervisor and is removed on cleanup or selection loss.
 
 wm-displays also coordinates per-window geometry history with dwm through the
 private _WM_DISPLAY_SETUP root property. Up to 16 arrangements are remembered
@@ -31,7 +44,7 @@ they are not the activation procedure for this environment.
 
 Requirements
 ------------
-In order to build dwm you need the Xlib header files.
+This checkout needs Xlib, Xft, Fontconfig, Xinerama and Xrandr development files.
 
 
 Installation

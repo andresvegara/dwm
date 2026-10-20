@@ -12,8 +12,14 @@ raise or relocate existing windows; clicking still raises them.
 Keyboard placement affects only the focused window; it does not rearrange
 other windows into a tiled layout.
 .P
-The status bar is disabled. The wm session provides an external compact tray;
-dwm does not implement a tray or start session services itself.
+The native bar is always visible at the bottom of every monitor, showing the
+tag, layout and selected window title. It reserves space for ordinary windows;
+fullscreen windows may cover it. There is no hide-bar binding.
+The primary RandR monitor also shows the status text and built-in XEmbed tray;
+without a valid primary output, the first monitor is used. The tray does not
+follow keyboard focus. The wm supervisor updates the local clock once per second.
+SNI/AppIndicator icons still require the external snixembed bridge.
+No external panel is needed. dwm does not start session services itself.
 New floating windows are centered once in their assigned monitor's usable area,
 including transient dialogs on their parent's monitor. Docks and fullscreen
 windows keep their own placement. Oversized floating windows start at the usable
