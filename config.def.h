@@ -9,7 +9,6 @@ static const char *fonts[] = {
 	"Hack Nerd Font Mono:size=11",
 	"Noto Color Emoji:size=11"
 };
-static const char dmenufont[] = "Hack Nerd Font Mono:size=11";
 static const char col_gray1[] = "#2d2d2d";
 static const char col_gray2[] = "#999999";
 static const char col_gray3[] = "#cccccc";
@@ -45,7 +44,7 @@ static const Layout layouts[] = {
 #define MODKEY Mod4Mask
 static char dmenumon[8];
 static const char *dmenucmd[] = {
-	"dmenu_run", "-m", dmenumon, "-fn", dmenufont, NULL
+	"wm-launcher", "-m", dmenumon, NULL
 };
 static const char *termcmd[] = { "jumpapp", "st", NULL };
 static const char *browsercmd[] = { "jumpapp", "brave", NULL };
