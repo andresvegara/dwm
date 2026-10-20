@@ -19,6 +19,13 @@ launcher, dependencies, coexistence with Plasma and integration status. dwm does
 not start the compositor, tray, network applet or screen locker itself. Synthetic
 tests do not establish hardware, visual or authentication correctness.
 
+wm-displays also coordinates per-window geometry history with dwm through the
+private _WM_DISPLAY_SETUP root property. Up to 16 arrangements are remembered
+per open floating window, only in memory; no title-based matching or reopening.
+Current fullscreen/snap states are kept, and docks/tiled clients are excluded.
+Geometry is captured before monitor fallback, then restored after a stable setup.
+No window history survives closing the window or restarting dwm.
+
 The upstream installation instructions below are retained for reference only;
 they are not the activation procedure for this environment.
 

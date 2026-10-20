@@ -117,6 +117,17 @@ Move the window while dragging. Manual movement releases keyboard placement.
 .TP
 .B Super\-Button3
 Resize the window while dragging. Manual resizing releases keyboard placement.
+.SH WINDOW SETUPS
+With wm-displays running, floating clients remember their normal rectangle and
+monitor for up to 16 display arrangements. Returning to an arrangement restores
+only windows that remain open. New windows keep their normal initial placement.
+Current fullscreen, maximized and snapped states are retained and adapted to the
+monitor; their floating restore rectangle is recovered. Docks and tiled clients
+are excluded. Restored geometry is bounded by the monitor and normal size hints.
+No titles or application identifiers are stored. History is memory-only and is
+lost when a window closes or dwm restarts. The private root property
+_WM_DISPLAY_SETUP coordinates transitions; ordinary focus changes do not restore
+or move windows.
 .SH CONTROL FEEDBACK
 Volume, mute and brightness bindings use wm-control. The existing steps and limits
 are preserved; Dunst shows the resulting state in a short, replaceable progress
