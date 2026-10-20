@@ -59,19 +59,19 @@ static const char *stopcmd[] = { "playerctl", "stop", NULL };
 static const char *prevcmd[] = { "playerctl", "previous", NULL };
 static const char *nextcmd[] = { "playerctl", "next", NULL };
 static const char *volupcmd[] = {
-	"wpctl", "set-volume", "--limit", "1.0", "@DEFAULT_AUDIO_SINK@", "5%+", NULL
+	"wm-control", "volume-up", NULL
 };
 static const char *voldowncmd[] = {
-	"wpctl", "set-volume", "--limit", "1.0", "@DEFAULT_AUDIO_SINK@", "5%-", NULL
+	"wm-control", "volume-down", NULL
 };
 static const char *mutecmd[] = {
-	"wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", "toggle", NULL
+	"wm-control", "mute", NULL
 };
 static const char *brightupcmd[] = {
-	"brightnessctl", "--class=backlight", "--min-value=1", "set", "+5%", NULL
+	"wm-control", "brightness-up", NULL
 };
 static const char *brightdowncmd[] = {
-	"brightnessctl", "--class=backlight", "--min-value=1", "set", "5%-", NULL
+	"wm-control", "brightness-down", NULL
 };
 static const char *capturecmd[] = { "flameshot", "gui", NULL };
 static const char *lockcmd[] = { "wm-launcher", "--action", "Bloquear", NULL };
