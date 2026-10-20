@@ -47,7 +47,7 @@ static char dmenumon[8];
 static const char *dmenucmd[] = {
 	"wm-launcher", "-m", dmenumon, NULL
 };
-static const char *termcmd[] = { "jumpapp", "st", NULL };
+static const char *termcmd[] = { "jumpapp", "alacritty", NULL };
 static const char *browsercmd[] = { "jumpapp", "brave", NULL };
 static const char *chromiumcmd[] = { "jumpapp", "chromium", NULL };
 static const char *filescmd[] = { "jumpapp", "dolphin", NULL };
