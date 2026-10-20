@@ -9,7 +9,15 @@ This checkout is an unactivated customization. Use make test from the parent
 wm directory, not make install or startx. It uses one tag, floating windows,
 click-to-focus, per-window half/quarter placement, maximize/restore and ordinary
 close requests without killing unsupported clients. The manual documents the
-current bindings. Compact tray and full session integration are not ready.
+current bindings, including the Plasma-style Super+Home, Super+PageUp/PageDown,
+Super+End and Super+Shift+PageUp/PageDown media shortcuts. Session controls need
+playerctl, wpctl (WirePlumber), brightnessctl, Flameshot and wm-launcher. Commands
+use direct argument vectors; no shell or separate hotkey daemon is involved.
+
+The coordinator's docs/session.md describes the X11 session, external tray,
+launcher, dependencies, coexistence with Plasma and integration status. dwm does
+not start the compositor, tray, network applet or screen locker itself. Synthetic
+tests do not establish hardware, visual or authentication correctness.
 
 The upstream installation instructions below are retained for reference only;
 they are not the activation procedure for this environment.
