@@ -60,7 +60,7 @@
 enum { CurNormal, CurResize, CurMove, CurLast }; /* cursor */
 enum { SchemeNorm, SchemeSel }; /* color schemes */
 enum { PlaceLeft = 1, PlaceRight = 2, PlaceTop = 4,
-       PlaceBottom = 8 }; /* window placement */
+       PlaceBottom = 8, PlaceMax = 16 }; /* window placement */
 enum { NetSupported, NetWMName, NetWMState, NetWMCheck,
        NetWMFullscreen, NetActiveWindow, NetWMWindowType,
        NetWMWindowTypeDialog, NetClientList, NetLast }; /* EWMH atoms */
@@ -91,7 +91,7 @@ struct Client {
 	int x, y, w, h;
 	int oldx, oldy, oldw, oldh;
 	int floatx, floaty, floatw, floath;
-	unsigned int placement;
+	unsigned int placement, restoreplacement;
 	int basew, baseh, incw, inch, maxw, maxh, minw, minh, hintsvalid;
 	int bw, oldbw;
 	unsigned int tags;
@@ -216,6 +216,7 @@ static void tagmon(const Arg *arg);
 static void tile(Monitor *m);
 static void togglebar(const Arg *arg);
 static void togglefloating(const Arg *arg);
+static void togglemaximize(const Arg *arg);
 static void toggletag(const Arg *arg);
 static void toggleview(const Arg *arg);
 static void unfocus(Client *c, int setfocus);
@@ -1211,6 +1212,8 @@ placeclient(Client *c, unsigned int placement)
 		c->floatw = c->w;
 		c->floath = c->h;
 	}
+	if (placement == PlaceMax && c->placement != PlaceMax)
+		c->restoreplacement = c->placement;
 	c->placement = placement;
 	if (!placement) {
 		w = MAX(1, MIN(c->floatw, m->ww - 2 * c->bw));
@@ -1699,7 +1702,7 @@ snapclient(const Arg *arg)
 	default:
 		return;
 	}
-	placement = c->placement;
+	placement = c->placement == PlaceMax ? 0 : c->placement;
 	placement = (placement & arg->ui) ? placement & ~axis
 		: (placement & ~axis) | arg->ui;
 	placeclient(c, placement);
@@ -1800,6 +1803,16 @@ togglefloating(const Arg *arg)
 		resize(selmon->sel, selmon->sel->x, selmon->sel->y,
 			selmon->sel->w, selmon->sel->h, 0);
 	arrange(selmon);
+}
+
+void
+togglemaximize(const Arg *arg)
+{
+	Client *c = selmon->sel;
+
+	if (c && !c->isfullscreen)
+		placeclient(c, c->placement == PlaceMax
+			? c->restoreplacement : PlaceMax);
 }
 
 void
