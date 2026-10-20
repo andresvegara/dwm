@@ -83,6 +83,12 @@ typedef struct {
 	const Arg arg;
 } Button;
 
+enum { SetupLength = 64, SavedSetups = 16 };
+typedef struct {
+	char setup[SetupLength + 1];
+	int monitor, x, y, w, h;
+} SavedGeometry;
+
 typedef struct Monitor Monitor;
 typedef struct Client Client;
 struct Client {
@@ -93,6 +99,8 @@ struct Client {
 	int floatx, floaty, floatw, floath;
 	int fullx, fully, fullw, fullh;
 	unsigned int placement, restoreplacement;
+	SavedGeometry geometry[SavedSetups];
+	unsigned int geometrycount, nextgeometry;
 	int basew, baseh, incw, inch, maxw, maxh, minw, minh, hintsvalid;
 	int bw, oldbw;
 	unsigned int tags;
@@ -152,6 +160,7 @@ static void arrange(Monitor *m);
 static void arrangemon(Monitor *m);
 static void attach(Client *c);
 static void attachstack(Client *c);
+static void beginwindowsetup(void);
 static void buttonpress(XEvent *e);
 static void centerclient(const Arg *arg);
 static void centerfloating(Client *c);
@@ -199,8 +208,10 @@ static Monitor *recttomon(int x, int y, int w, int h);
 static void resize(Client *c, int x, int y, int w, int h, int interact);
 static void resizeclient(Client *c, int x, int y, int w, int h);
 static void resizemouse(const Arg *arg);
+static void restoregeometry(Client *c, const SavedGeometry *g);
 static void restack(Monitor *m);
 static void run(void);
+static void savewindowgeometry(void);
 static void scan(void);
 static int sendevent(Client *c, Atom proto);
 static void sendmon(Client *c, Monitor *m);
@@ -236,6 +247,7 @@ static void updatestatus(void);
 static void updatetitle(Client *c);
 static void updatewindowtype(Client *c);
 static void updatewmhints(Client *c);
+static void updatewindowsetup(void);
 static void view(const Arg *arg);
 static Client *wintoclient(Window w);
 static Monitor *wintomon(Window w);
@@ -269,7 +281,9 @@ static void (*handler[LASTEvent]) (XEvent *) = {
 	[PropertyNotify] = propertynotify,
 	[UnmapNotify] = unmapnotify
 };
-static Atom wmatom[WMLast], netatom[NetLast];
+static Atom wmatom[WMLast], netatom[NetLast], windowsetupatom;
+static char windowsetup[SetupLength + 1];
+static int setuppending;
 static int running = 1;
 static Cur *cursor[CurLast];
 static Clr **scheme;
@@ -424,6 +438,15 @@ attachstack(Client *c)
 {
 	c->snext = c->mon->stack;
 	c->mon->stack = c;
+}
+
+void
+beginwindowsetup(void)
+{
+	if (!setuppending) {
+		savewindowgeometry();
+		setuppending = 1;
+	}
 }
 
 void
@@ -604,6 +627,7 @@ configurenotify(XEvent *e)
 		if (ev->width <= 0 || ev->height <= 0)
 			return;
 
+		beginwindowsetup();
 		dirty = (sw != ev->width || sh != ev->height);
 		sw = ev->width;
 		sh = ev->height;
@@ -1346,7 +1370,10 @@ propertynotify(XEvent *e)
 	Window trans;
 	XPropertyEvent *ev = &e->xproperty;
 
-	if ((ev->window == root) && (ev->atom == XA_WM_NAME))
+	if (ev->window == root && ev->atom == windowsetupatom) {
+		if (ev->state != PropertyDelete)
+			updatewindowsetup();
+	} else if ((ev->window == root) && (ev->atom == XA_WM_NAME))
 		updatestatus();
 	else if (ev->state == PropertyDelete)
 		return; /* ignore */
@@ -1477,6 +1504,41 @@ resizemouse(const Arg *arg)
 }
 
 void
+restoregeometry(Client *c, const SavedGeometry *g)
+{
+	Monitor *m;
+	int x, y, w, h, border;
+
+	for (m = mons; m && m->num != g->monitor; m = m->next);
+	if (!m)
+		m = c->mon;
+	if (m != c->mon) {
+		if (c->mon->sel == c)
+			c->mon->sel = NULL;
+		detach(c);
+		detachstack(c);
+		c->mon = m;
+		attach(c);
+		attachstack(c);
+	}
+	border = c->isfullscreen ? c->oldbw : c->bw;
+	w = MAX(1, MIN(g->w, m->ww - 2 * border));
+	h = MAX(1, MIN(g->h, m->wh - 2 * border));
+	x = m->wx + MAX(0, MIN(g->x, m->ww - w - 2 * border));
+	y = m->wy + MAX(0, MIN(g->y, m->wh - h - 2 * border));
+	c->floatx = c->fullx = x;
+	c->floaty = c->fully = y;
+	c->floatw = c->fullw = w;
+	c->floath = c->fullh = h;
+	if (c->isfullscreen)
+		resizeclient(c, m->mx, m->my, m->mw, m->mh);
+	else if (c->placement)
+		placeclient(c, c->placement);
+	else
+		resize(c, x, y, w, h, 0);
+}
+
+void
 restack(Monitor *m)
 {
 	Client *c;
@@ -1515,6 +1577,45 @@ run(void)
 	while (running && !XNextEvent(dpy, &ev))
 		if (handler[ev.type])
 			handler[ev.type](&ev); /* call handler */
+}
+
+void
+savewindowgeometry(void)
+{
+	Client *c;
+	Monitor *m;
+	SavedGeometry *g;
+	unsigned int i;
+	int x, y, w, h;
+
+	if (!windowsetup[0])
+		return;
+	for (m = mons; m; m = m->next)
+		for (c = m->clients; c; c = c->next) {
+			if (c->isdock || !c->isfloating || (c->isfullscreen && !c->oldstate))
+				continue;
+			for (i = 0; i < c->geometrycount && strcmp(c->geometry[i].setup, windowsetup); i++);
+			if (i == c->geometrycount) {
+				if (i < SavedSetups)
+					c->geometrycount++;
+				else {
+					i = c->nextgeometry;
+					c->nextgeometry = (i + 1) % SavedSetups;
+				}
+			}
+			if (c->placement) {
+				x = c->floatx; y = c->floaty; w = c->floatw; h = c->floath;
+			} else if (c->isfullscreen) {
+				x = c->fullx; y = c->fully; w = c->fullw; h = c->fullh;
+			} else {
+				x = c->x; y = c->y; w = c->w; h = c->h;
+			}
+			g = &c->geometry[i];
+			memcpy(g->setup, windowsetup, sizeof g->setup);
+			g->monitor = m->num;
+			g->x = x - m->wx; g->y = y - m->wy;
+			g->w = MAX(1, w); g->h = MAX(1, h);
+		}
 }
 
 void
@@ -1707,6 +1808,7 @@ setup(void)
 	updategeom();
 	/* init atoms */
 	utf8string = XInternAtom(dpy, "UTF8_STRING", False);
+	windowsetupatom = XInternAtom(dpy, "_WM_DISPLAY_SETUP", False);
 	wmatom[WMProtocols] = XInternAtom(dpy, "WM_PROTOCOLS", False);
 	wmatom[WMDelete] = XInternAtom(dpy, "WM_DELETE_WINDOW", False);
 	wmatom[WMState] = XInternAtom(dpy, "WM_STATE", False);
@@ -2242,6 +2344,68 @@ updatewindowtype(Client *c)
 		c->bw = 0;
 		XSetWindowBorderWidth(dpy, c->win, 0);
 	}
+}
+
+void
+updatewindowsetup(void)
+{
+	Atom actual;
+	int format, valid = 1;
+	unsigned long length, remaining;
+	unsigned char *data = NULL;
+	char key[SetupLength + 1];
+	Client *c, *active = selmon->sel, **clients;
+	Monitor *m;
+	size_t i, j, count = 0;
+
+	if (XGetWindowProperty(dpy, root, windowsetupatom, 0, (SetupLength + 4) / 4,
+		False, XA_STRING, &actual, &format, &length, &remaining, &data) != Success || !data)
+		return;
+	if (actual != XA_STRING || format != 8 || remaining)
+		valid = 0;
+	else if (length == 7 && !memcmp(data, "pending", 7)) {
+		XFree(data);
+		beginwindowsetup();
+		return;
+	} else if (length != SetupLength)
+		valid = 0;
+	else
+		for (i = 0; i < SetupLength; i++)
+			if (!((data[i] >= '0' && data[i] <= '9') || (data[i] >= 'a' && data[i] <= 'f')))
+				valid = 0;
+	if (valid) {
+		memcpy(key, data, SetupLength);
+		key[SetupLength] = '\0';
+	}
+	XFree(data);
+	if (!valid || (!setuppending && !strcmp(key, windowsetup)))
+		return;
+	if (!setuppending)
+		savewindowgeometry();
+	memcpy(windowsetup, key, sizeof windowsetup);
+	setuppending = 0;
+	for (m = mons; m; m = m->next)
+		for (c = m->clients; c; c = c->next)
+			count++;
+	if (!count)
+		return;
+	clients = ecalloc(count, sizeof *clients);
+	for (i = 0, m = mons; m; m = m->next)
+		for (c = m->clients; c; c = c->next)
+			clients[i++] = c;
+	for (i = 0; i < count; i++) {
+		c = clients[i];
+		if (c->isdock || !c->isfloating || (c->isfullscreen && !c->oldstate))
+			continue;
+		for (j = 0; j < c->geometrycount; j++)
+			if (!strcmp(c->geometry[j].setup, key)) {
+				restoregeometry(c, &c->geometry[j]);
+				break;
+			}
+	}
+	free(clients);
+	if (active)
+		focus(active);
 }
 
 void
