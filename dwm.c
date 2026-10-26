@@ -228,6 +228,8 @@ static void seturgent(Client *c, int urg);
 static void showhide(Client *c);
 static void snapclient(const Arg *arg);
 static void spawn(const Arg *arg);
+static unsigned int statusblockat(int x);
+static void statusclick(int x, unsigned int button);
 static void tag(const Arg *arg);
 static void tagmon(const Arg *arg);
 static void tile(Monitor *m);
@@ -261,7 +263,7 @@ static void zoom(const Arg *arg);
 
 /* variables */
 static const char broken[] = "broken";
-static char stext[256];
+static char stext[1024], statusraw[1024];
 static int screen;
 static int sw, sh;           /* X display screen geometry width, height */
 static int bh;               /* bar height */
@@ -286,7 +288,7 @@ static void (*handler[LASTEvent]) (XEvent *) = {
 	[SelectionClear] = selectionclear,
 	[UnmapNotify] = unmapnotify
 };
-static Atom wmatom[WMLast], netatom[NetLast], windowsetupatom;
+static Atom wmatom[WMLast], netatom[NetLast], windowsetupatom, statuspidatom;
 static char windowsetup[SetupLength + 1];
 static int setuppending;
 static int running = 1;
@@ -486,8 +488,15 @@ buttonpress(XEvent *e)
 			arg.ui = 1 << i;
 		} else if (ev->x < x + TEXTW(selmon->ltsymbol))
 			click = ClkLtSymbol;
-		else if (selmon == statusmon && ev->x > selmon->ww - gettraywidth(selmon) - (int)TEXTW(stext) + lrpad - 2)
+		else if (selmon == statusmon && ev->x >= selmon->ww - gettraywidth(selmon)
+		- MIN(selmon->ww - gettraywidth(selmon), (int)TEXTW(stext) - lrpad + 2)
+		&& ev->x < selmon->ww - gettraywidth(selmon)) {
 			click = ClkStatusText;
+			if (!CLEANMASK(ev->state))
+				statusclick(ev->x - (selmon->ww - gettraywidth(selmon)
+					- MIN(selmon->ww - gettraywidth(selmon), (int)TEXTW(stext) - lrpad + 2)),
+					ev->button);
+		}
 		else
 			click = ClkWinTitle;
 	} else if ((c = wintoclient(ev->window))) {
@@ -1877,6 +1886,7 @@ setup(void)
 	/* init atoms */
 	utf8string = XInternAtom(dpy, "UTF8_STRING", False);
 	windowsetupatom = XInternAtom(dpy, "_WM_DISPLAY_SETUP", False);
+	statuspidatom = XInternAtom(dpy, "_DWM_BLOCKS_PID", False);
 	wmatom[WMProtocols] = XInternAtom(dpy, "WM_PROTOCOLS", False);
 	wmatom[WMDelete] = XInternAtom(dpy, "WM_DELETE_WINDOW", False);
 	wmatom[WMState] = XInternAtom(dpy, "WM_STATE", False);
@@ -2394,11 +2404,70 @@ updatesizehints(Client *c)
 	c->hintsvalid = 1;
 }
 
+unsigned int
+statusblockat(int x)
+{
+	char text[sizeof statusraw];
+	size_t i, n = 0;
+	unsigned int id = 0, width;
+
+	if (x < 0)
+		return 0;
+	for (i = 0; ; i++) {
+		if ((unsigned char)statusraw[i] < 32) {
+			text[n] = '\0';
+			width = drw_fontset_getwidth(drw, text);
+			if ((unsigned int)x < width)
+				return id;
+			x -= width;
+			if (!statusraw[i])
+				return 0;
+			id = (unsigned char)statusraw[i];
+			n = 0;
+		} else if ((unsigned char)statusraw[i] != 127)
+			text[n++] = statusraw[i];
+	}
+}
+
+void
+statusclick(int x, unsigned int button)
+{
+	Atom actual;
+	int format;
+	unsigned long count, remaining, pid;
+	unsigned char *data = NULL;
+	unsigned int id = statusblockat(x);
+	union sigval value;
+
+	if (!id || button < 1 || button > 9)
+		return;
+	if (XGetWindowProperty(dpy, root, statuspidatom, 0, 1, False, XA_CARDINAL,
+		&actual, &format, &count, &remaining, &data) != Success)
+		return;
+	if (data && actual == XA_CARDINAL && format == 32 && count == 1 && !remaining) {
+		pid = *(unsigned long *)data;
+		if (pid > 1 && pid <= 0x7fffffffUL) {
+			value.sival_int = (id << 8) | button;
+			if (sigqueue((pid_t)pid, SIGUSR1, value) == -1 && errno != ESRCH)
+				fprintf(stderr, "dwm: status signal failed: %s\n", strerror(errno));
+		}
+	}
+	if (data)
+		XFree(data);
+}
+
 void
 updatestatus(void)
 {
-	if (!gettextprop(root, XA_WM_NAME, stext, sizeof(stext)))
-		strcpy(stext, "dwm-"VERSION);
+	size_t i, n = 0;
+
+	if (!gettextprop(root, XA_WM_NAME, statusraw, sizeof statusraw))
+		strcpy(statusraw, "dwm-"VERSION);
+	/* Block IDs are protocol bytes, never glyphs for Xft to discover. */
+	for (i = 0; statusraw[i]; i++)
+		if ((unsigned char)statusraw[i] >= 32 && (unsigned char)statusraw[i] != 127)
+			stext[n++] = statusraw[i];
+	stext[n] = '\0';
 	if (statusmon)
 		drawbar(statusmon);
 }
