@@ -6,6 +6,7 @@ static const unsigned int borderpx = 1;
 static const unsigned int snap = 32;
 static const int showbar = 1;
 static const int topbar = 0;
+static const int showtitlebar = 0;
 static const char *fonts[] = {
 	"Hack Nerd Font Mono:size=11",
 	"Noto Color Emoji:size=11"
