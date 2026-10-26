@@ -17,7 +17,8 @@ tag, layout and selected window title. It reserves space for ordinary windows;
 fullscreen windows may cover it. There is no hide-bar binding.
 The primary RandR monitor also shows the status text and built-in XEmbed tray;
 without a valid primary output, the first monitor is used. The tray does not
-follow keyboard focus. The wm supervisor updates the local clock once per second.
+follow keyboard focus. The external dwmblocks process supplies clickable status
+blocks, including the local clock once per second.
 SNI/AppIndicator icons still require the external snixembed bridge.
 No external panel is needed. dwm does not start session services itself.
 New floating windows are centered once in their assigned monitor's usable area,
@@ -37,8 +38,14 @@ Print version information to stderr and exit.
 Super is the Windows key (Mod4). Alt is Mod1.
 .TP
 .B Super\-Space
-Open wm-launcher: applications and session actions through dmenu.
+Open wm-launcher: Rofi applications, windows and fixed session actions.
 Power and logout actions require confirmation in the launcher.
+.TP
+.B Super\-d
+Collect a command with Rofi and run it in Alacritty, retaining output until Enter.
+.TP
+.B Super\-Escape
+Open the external session action menu.
 .TP
 .B Super\-Return
 Open, raise or cycle Alacritty windows through jumpapp.
@@ -80,7 +87,9 @@ Restore floating placement if needed, then center the window.
 Move to the previous or next monitor, retaining keyboard focus.
 .TP
 .B Alt\-Tab, Alt\-Shift\-Tab
-Focus the next or previous window in client-list order.
+Open Rofi's external window selector. Both bindings open the same selector;
+use its navigation and confirm/cancel controls. This is not Awesome's native
+Alt-release MRU cycle.
 .TP
 .B Super\-q, Control\-q, Alt\-F4
 Request WM_DELETE_WINDOW on the focused window. The application handles
@@ -117,6 +126,9 @@ Open the interactive Flameshot capture UI. No automatic save is requested.
 Run wm-launcher --action Bloquear. The session's xss-lock/i3lock integration
 must be running; the shortcut alone does not provide a screen locker.
 .SH MOUSE
+.TP
+.B Button3 on the root window
+Open the external session action menu.
 .TP
 .B Button1
 Focus the clicked window and replay the click to the application.
