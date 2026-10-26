@@ -68,7 +68,7 @@ enum { NetSupported, NetWMName, NetWMState, NetWMCheck,
        NetWMWindowTypeDialog, NetWMWindowTypeDock, NetClientList,
        NetWMHidden, NetWMAbove, NetLast }; /* EWMH atoms */
 enum { WMProtocols, WMDelete, WMState, WMTakeFocus, WMLast }; /* default atoms */
-enum { ClkTagBar, ClkLtSymbol, ClkStatusText, ClkWinTitle,
+enum { ClkStart, ClkTagBar, ClkLtSymbol, ClkStatusText, ClkWinTitle,
        ClkClientWin, ClkRootWin, ClkLast }; /* clicks */
 
 typedef union {
@@ -194,6 +194,9 @@ static void destroynotify(XEvent *e);
 static void detach(Client *c);
 static void detachstack(Client *c);
 static Monitor *dirtomon(int dir);
+static int barstartwidth(Monitor *m);
+static int barstatuswidth(Monitor *m);
+static Client *taskbar(Monitor *m, int clickx);
 static void drawbar(Monitor *m);
 static void drawbars(void);
 static void expose(XEvent *e);
@@ -505,7 +508,7 @@ buttonpress(XEvent *e)
 {
 	unsigned int i, x, click;
 	Arg arg = {0};
-	Client *c;
+	Client *c, *selected = selmon->sel;
 	Monitor *m;
 	XButtonPressedEvent *ev = &e->xbutton;
 
@@ -534,26 +537,27 @@ buttonpress(XEvent *e)
 		focus(NULL);
 	}
 	if (ev->window == selmon->barwin) {
-		i = x = 0;
-		do
-			x += TEXTW(tags[i]);
-		while (ev->x >= x && ++i < LENGTH(tags));
-		if (i < LENGTH(tags)) {
-			click = ClkTagBar;
-			arg.ui = 1 << i;
-		} else if (ev->x < x + TEXTW(selmon->ltsymbol))
-			click = ClkLtSymbol;
-		else if (selmon == statusmon && ev->x >= selmon->ww - gettraywidth(selmon)
-		- MIN(selmon->ww - gettraywidth(selmon), (int)TEXTW(stext) - lrpad + 2)
+		x = selmon->ww - gettraywidth(selmon) - barstatuswidth(selmon);
+		if (ev->x >= 0 && ev->x < barstartwidth(selmon))
+			click = ClkStart;
+		else if (barstatuswidth(selmon) && ev->x >= (int)x
 		&& ev->x < selmon->ww - gettraywidth(selmon)) {
 			click = ClkStatusText;
 			if (!CLEANMASK(ev->state))
-				statusclick(ev->x - (selmon->ww - gettraywidth(selmon)
-					- MIN(selmon->ww - gettraywidth(selmon), (int)TEXTW(stext) - lrpad + 2)),
-					ev->button);
+				statusclick(ev->x - x, ev->button);
+		} else {
+			if (ev->x >= 0 && ev->button == Button1 && !CLEANMASK(ev->state)
+			&& (c = taskbar(selmon, ev->x))) {
+				if (c == selected && !c->ishidden)
+					hideclient(c);
+				else {
+					restoreclient(c);
+					focus(c);
+					restack(selmon);
+				}
+			}
+			return;
 		}
-		else
-			click = ClkWinTitle;
 	} else if ((c = titleclient(ev->window))) {
 		focus(c);
 		restack(selmon);
@@ -1111,56 +1115,63 @@ dirtomon(int dir)
 	return m;
 }
 
+int
+barstartwidth(Monitor *m)
+{
+	return MIN((int)TEXTW("Inicio"), MAX(0, m->ww - gettraywidth(m)));
+}
+
+int
+barstatuswidth(Monitor *m)
+{
+	return m == statusmon ? MIN(MAX(0, m->ww - gettraywidth(m) - barstartwidth(m)),
+		MAX(0, (int)TEXTW(stext) - lrpad + 2)) : 0;
+}
+
+/* Drawing and clicks share the same boundaries, including rounding. */
+Client *
+taskbar(Monitor *m, int clickx)
+{
+	Client *c;
+	int n = 0, i = 0, x, end, start = barstartwidth(m);
+	int width = MAX(0, m->ww - gettraywidth(m) - barstatuswidth(m) - start);
+	char label[sizeof c->name + 8];
+
+	for (c = m->clients; c; c = c->next)
+		if (!c->isdock && (c->tags & m->tagset[m->seltags]))
+			n++;
+	for (c = m->clients; c; c = c->next) {
+		if (c->isdock || !(c->tags & m->tagset[m->seltags]))
+			continue;
+		x = start + (long)i * width / n;
+		end = start + (long)++i * width / n;
+		if (clickx >= x && clickx < end)
+			return c;
+		if (clickx >= 0 || end <= x)
+			continue;
+		snprintf(label, sizeof label, "%s%s", c->ishidden ? "[min] " : "", c->name);
+		drw_setscheme(drw, scheme[m == selmon && c == m->sel && !c->ishidden
+			? SchemeSel : SchemeNorm]);
+		drw_text(drw, x, 0, end - x, bh, MIN(lrpad / 2, end - x), label, c->isurgent);
+	}
+	return NULL;
+}
+
 void
 drawbar(Monitor *m)
 {
-	int x, w, tw = 0, stw = gettraywidth(m);
-	int boxs = drw->fonts->h / 9;
-	int boxw = drw->fonts->h / 6 + 2;
-	unsigned int i, occ = 0, urg = 0;
-	Client *c;
+	int start = barstartwidth(m), status = barstatuswidth(m);
+	int width = MAX(0, m->ww - gettraywidth(m));
 
-	if (!m->showbar)
+	if (!m->showbar || !width)
 		return;
-
-	/* draw status first so it can be overdrawn by tags later */
-	if (m == statusmon) {
-		drw_setscheme(drw, scheme[SchemeNorm]);
-		tw = MIN(m->ww - stw, TEXTW(stext) - lrpad + 2);
-		drw_text(drw, m->ww - stw - tw, 0, tw, bh, 0, stext, 0);
-	}
-
-	for (c = m->clients; c; c = c->next) {
-		occ |= c->tags;
-		if (c->isurgent)
-			urg |= c->tags;
-	}
-	x = 0;
-	for (i = 0; i < LENGTH(tags); i++) {
-		w = TEXTW(tags[i]);
-		drw_setscheme(drw, scheme[m->tagset[m->seltags] & 1 << i ? SchemeSel : SchemeNorm]);
-		drw_text(drw, x, 0, w, bh, lrpad / 2, tags[i], urg & 1 << i);
-		if (occ & 1 << i)
-			drw_rect(drw, x + boxs, boxs, boxw, boxw,
-				m == selmon && selmon->sel && selmon->sel->tags & 1 << i,
-				urg & 1 << i);
-		x += w;
-	}
-	w = TEXTW(m->ltsymbol);
 	drw_setscheme(drw, scheme[SchemeNorm]);
-	x = drw_text(drw, x, 0, w, bh, lrpad / 2, m->ltsymbol, 0);
-
-	if ((w = m->ww - stw - tw - x) > bh) {
-		if (m->sel) {
-			drw_setscheme(drw, scheme[m == selmon ? SchemeSel : SchemeNorm]);
-			drw_text(drw, x, 0, w, bh, lrpad / 2, m->sel->name, 0);
-			if (m->sel->isfloating)
-				drw_rect(drw, x + boxs, boxs, boxw, boxw, m->sel->isfixed, 0);
-		} else {
-			drw_setscheme(drw, scheme[SchemeNorm]);
-			drw_rect(drw, x, 0, w, bh, 1, 1);
-		}
-	}
+	drw_rect(drw, 0, 0, width, bh, 1, 1);
+	if (start)
+		drw_text(drw, 0, 0, start, bh, MIN(lrpad / 2, start), "Inicio", 0);
+	if (status)
+		drw_text(drw, width - status, 0, status, bh, 0, stext, 0);
+	taskbar(m, -1);
 	drw_map(drw, m->barwin, 0, 0, m->ww, bh);
 }
 
