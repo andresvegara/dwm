@@ -26,7 +26,12 @@ titlebar or Super key is needed. Maximized/snapped windows restore floating size
 under the pointer on actual motion; clicking alone does not restore them.
 Super+left-drag uses the same movement path and remains the fallback for clients
 without draggable headers. Fullscreen/docks/hidden windows are not moved.
-This supports pointer movement, not the EWMH resize or keyboard-movement directions.
+The same protocol supports all eight pointer resize edges/corners, including
+client size hints and fixed-size protection. The edge opposite a top/left grip
+stays anchored after applying size hints. Resize from the current rectangle,
+including maximized/snapped placement; a real size change clears that placement.
+Application-requested drags never warp the pointer. Keyboard move/resize directions
+are not implemented; the existing keyboard placement shortcuts remain available.
 Status and the built-in XEmbed tray stay
 on the primary RandR monitor (first monitor fallback), not the focused monitor.
 The coordinator's docs/session.md describes the X11 session, snixembed SNI bridge,
