@@ -2007,7 +2007,7 @@ spawn(const Arg *arg)
 	char **argv;
 	size_t n;
 
-	if (arg->v == dmenucmd)
+	if (arg->v == dmenucmd || arg->v == commandcmd)
 		snprintf(dmenumon, sizeof(dmenumon), "%d", selmon->num);
 
 	if ((pid = fork()) == -1) {

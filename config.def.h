@@ -47,6 +47,7 @@ static char dmenumon[8];
 static const char *dmenucmd[] = {
 	"wm-launcher", "-m", dmenumon, NULL
 };
+static const char *commandcmd[] = { "wm-command", "-m", dmenumon, NULL };
 static const char *termcmd[] = { "jumpapp", "-n", "alacritty", NULL };
 static const char *browsercmd[] = { "jumpapp", "-n", "brave", NULL };
 static const char *chromiumcmd[] = { "jumpapp", "-n", "chromium", NULL };
@@ -79,6 +80,7 @@ static const char *lockcmd[] = { "wm-launcher", "--action", "Bloquear", NULL };
 static const Key keys[] = {
 	/* modifier          key           function          argument */
 	{ MODKEY,            XK_space,     spawn,            {.v = dmenucmd } },
+	{ MODKEY,            XK_d,         spawn,            {.v = commandcmd } },
 	{ MODKEY,            XK_Return,    spawn,            {.v = termcmd } },
 	{ MODKEY,            XK_w,         spawn,            {.v = browsercmd } },
 	{ MODKEY|ShiftMask,  XK_w,         spawn,            {.v = chromiumcmd } },
