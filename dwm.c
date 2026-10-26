@@ -22,6 +22,7 @@
  */
 #include <ctype.h>
 #include <errno.h>
+#include <limits.h>
 #include <locale.h>
 #include <signal.h>
 #include <stdarg.h>
@@ -66,7 +67,7 @@ enum { PlaceLeft = 1, PlaceRight = 2, PlaceTop = 4,
 enum { NetSupported, NetWMName, NetWMState, NetWMCheck,
        NetWMFullscreen, NetActiveWindow, NetWMWindowType,
        NetWMWindowTypeDialog, NetWMWindowTypeDock, NetClientList,
-       NetWMHidden, NetWMAbove, NetLast }; /* EWMH atoms */
+       NetWMHidden, NetWMAbove, NetWMMoveResize, NetLast }; /* EWMH atoms */
 enum { WMProtocols, WMDelete, WMState, WMTakeFocus, WMLast }; /* default atoms */
 enum { ClkStart, ClkTagBar, ClkLtSymbol, ClkStatusText, ClkWinTitle,
        ClkClientWin, ClkRootWin, ClkLast }; /* clicks */
@@ -177,6 +178,7 @@ static int titleh(Client *c);
 static int titlebutton(Client *c, int x);
 static void createtitle(Client *c);
 static void drawtitle(Client *c);
+static void dragclient(Client *c, XClientMessageEvent *request);
 static void stacktitle(Client *c);
 static void inittitlecolors(int bluebird);
 static void windowmenu(Client *c);
@@ -329,7 +331,7 @@ static char windowsetup[SetupLength + 1];
 static int setuppending;
 static int running = 1;
 static unsigned long focusserial;
-static Window focusedclient;
+static Window focusedclient, movingwin;
 static Window switchwin, *switchitems;
 static size_t switchcount, switchindex;
 static Monitor *switchmon;
@@ -390,21 +392,29 @@ applyrules(Client *c)
 int
 applysizehints(Client *c, int *x, int *y, int *w, int *h, int interact)
 {
-	int baseismin;
-	Monitor *m = c->mon;
+	int baseismin, left, top, right, bottom;
+	Monitor *m = c->mon, *area;
 
 	/* set minimum possible */
 	*w = MAX(1, *w);
 	*h = MAX(1, *h);
 	if (interact) {
-		if (*x > sw)
-			*x = sw - WIDTH(c);
-		if (*y > sh)
-			*y = sh - HEIGHT(c);
-		if (*x + *w + 2 * c->bw < 0)
-			*x = 0;
-		if (*y + *h + 2 * c->bw < 0)
-			*y = 0;
+		left = m->mx; top = m->my;
+		right = m->mx + m->mw; bottom = m->my + m->mh;
+		for (area = mons; area; area = area->next) {
+			left = MIN(left, area->mx);
+			top = MIN(top, area->my);
+			right = MAX(right, area->mx + area->mw);
+			bottom = MAX(bottom, area->my + area->mh);
+		}
+		if (*x > right)
+			*x = right - WIDTH(c);
+		if (*y > bottom)
+			*y = bottom - HEIGHT(c);
+		if (*x + *w + 2 * c->bw < left)
+			*x = left;
+		if (*y + *h + 2 * c->bw < top)
+			*y = top;
 	} else {
 		if (*x >= m->wx + m->ww)
 			*x = m->wx + m->ww - WIDTH(c);
@@ -893,7 +903,15 @@ clientmessage(XEvent *e)
 	}
 	if (!c || c->isdock)
 		return;
-	if (cme->message_type == netatom[NetWMState]) {
+	if (cme->message_type == netatom[NetWMMoveResize]) {
+		if (cme->format != 32 || cme->data.l[2] != 8
+		|| (cme->data.l[3] != 0 && cme->data.l[3] != Button1)
+		|| cme->data.l[4] < 0 || cme->data.l[4] > 2
+		|| cme->data.l[0] < SHRT_MIN || cme->data.l[0] > SHRT_MAX
+		|| cme->data.l[1] < SHRT_MIN || cme->data.l[1] > SHRT_MAX)
+			return;
+		dragclient(c, cme);
+	} else if (cme->message_type == netatom[NetWMState]) {
 		if (cme->format != 32 || cme->data.l[0] < 0 || cme->data.l[0] > 2)
 			return;
 		if (cme->data.l[1] == netatom[NetWMFullscreen]
@@ -1876,68 +1894,103 @@ motionnotify(XEvent *e)
 }
 
 void
-movemouse(const Arg *arg)
+dragclient(Client *c, XClientMessageEvent *request)
 {
-	int x, y, ocx, ocy, nx, ny;
-	Client *c;
+	int x, y, px, py, ocx, ocy, nx, ny, offsety;
+	unsigned int mask;
+	double anchor;
+	Window dummy, win;
 	Monitor *m;
 	XEvent ev;
 	Time lasttime = 0;
 
-	if (!(c = selmon->sel))
+	if (movingwin || !c || c->isdock || c->isfullscreen || !ISVISIBLE(c))
 		return;
-	if (c->isfullscreen) /* no support moving fullscreen windows by mouse */
-		return;
-	restack(selmon);
-	ocx = c->x;
-	ocy = c->y;
 	if (XGrabPointer(dpy, root, False, MOUSEMASK, GrabModeAsync, GrabModeAsync,
 		None, cursor[CurMove]->cursor, CurrentTime) != GrabSuccess)
 		return;
-	if (!getrootptr(&x, &y)) {
+	/* A release can precede the client's request; never wait for a lost release. */
+	if (!XQueryPointer(dpy, root, &dummy, &dummy, &x, &y, &px, &py, &mask)
+	|| !(mask & Button1Mask)) {
 		XUngrabPointer(dpy, CurrentTime);
 		return;
 	}
-	do {
-		XMaskEvent(dpy, MOUSEMASK|ExposureMask|SubstructureRedirectMask, &ev);
-		switch(ev.type) {
-		case ConfigureRequest:
-		case Expose:
-		case MapRequest:
-			handler[ev.type](&ev);
+	if (request) {
+		x = request->data.l[0];
+		y = request->data.l[1];
+	}
+	focus(c);
+	restack(c->mon);
+	movingwin = win = c->win;
+	ocx = c->x;
+	ocy = c->y;
+	anchor = MAX(0.0, MIN(1.0, (double)(x - c->x) / WIDTH(c)));
+	offsety = MAX(0, y - c->y);
+	while (!XNextEvent(dpy, &ev)) {
+		if ((randractive && (ev.type == randrevent + RRScreenChangeNotify
+		|| ev.type == randrevent + RRNotify))
+		|| (ev.type == ConfigureNotify && ev.xconfigure.window == root)) {
+			XPutBackEvent(dpy, &ev);
 			break;
-		case MotionNotify:
+		}
+		if (ev.type == ButtonRelease && ev.xbutton.button == Button1)
+			break;
+		if (ev.type == ClientMessage && ev.xclient.window == win
+		&& ev.xclient.message_type == netatom[NetWMMoveResize]
+		&& ev.xclient.format == 32 && ev.xclient.data.l[2] == 11)
+			break;
+		if (ev.type == MotionNotify) {
 			if ((ev.xmotion.time - lasttime) <= (1000 / refreshrate))
 				continue;
 			lasttime = ev.xmotion.time;
-
-			nx = ocx + (ev.xmotion.x - x);
-			ny = ocy + (ev.xmotion.y - y);
+			nx = ocx + (ev.xmotion.x_root - x);
+			ny = ocy + (ev.xmotion.y_root - y);
 			if (nx == ocx && ny == ocy)
-				break;
-			c->placement = 0;
-			if (abs(selmon->wx - nx) < snap)
-				nx = selmon->wx;
-			else if (abs((selmon->wx + selmon->ww) - (nx + WIDTH(c))) < snap)
-				nx = selmon->wx + selmon->ww - WIDTH(c);
-			if (abs(selmon->wy - ny) < snap)
-				ny = selmon->wy;
-			else if (abs((selmon->wy + selmon->wh) - (ny + HEIGHT(c))) < snap)
-				ny = selmon->wy + selmon->wh - HEIGHT(c);
-			if (!c->isfloating && selmon->lt[selmon->sellt]->arrange
-			&& (abs(nx - c->x) > snap || abs(ny - c->y) > snap))
-				togglefloating(NULL);
-			if (!selmon->lt[selmon->sellt]->arrange || c->isfloating)
+				continue;
+			if (c->placement) {
+				placeclient(c, 0);
+				ocx = x - (int)(anchor * WIDTH(c));
+				ocy = y - MIN(offsety, HEIGHT(c) - 1);
+				nx = ocx + (ev.xmotion.x_root - x);
+				ny = ocy + (ev.xmotion.y_root - y);
+			}
+			m = c->mon;
+			if (abs(m->wx - nx) < snap)
+				nx = m->wx;
+			else if (abs((m->wx + m->ww) - (nx + WIDTH(c))) < snap)
+				nx = m->wx + m->ww - WIDTH(c);
+			if (abs(m->wy - ny) < snap)
+				ny = m->wy;
+			else if (abs((m->wy + m->wh) - (ny + HEIGHT(c))) < snap)
+				ny = m->wy + m->wh - HEIGHT(c);
+			if (!c->isfloating && m->lt[m->sellt]->arrange
+			&& (abs(nx - c->x) > snap || abs(ny - c->y) > snap)) {
+				c->isfloating = 1;
+				arrange(m);
+			}
+			if (!m->lt[m->sellt]->arrange || c->isfloating)
 				resize(c, nx, ny, c->w, c->h, 1);
-			break;
+		} else if (ev.type != ButtonPress && ev.type >= 0
+		&& ev.type < LASTEvent && handler[ev.type]) {
+			handler[ev.type](&ev);
+			c = wintoclient(win);
+			if (!c || c->isdock || c->isfullscreen || !ISVISIBLE(c))
+				break;
 		}
-	} while (ev.type != ButtonRelease);
-	XUngrabPointer(dpy, CurrentTime);
-	if ((m = recttomon(c->x, c->y, c->w, c->h)) != selmon) {
-		sendmon(c, m);
-		selmon = m;
-		focus(NULL);
 	}
+	XUngrabPointer(dpy, CurrentTime);
+	if ((c = wintoclient(win)) && !c->isfullscreen && ISVISIBLE(c)
+	&& (m = recttomon(c->x, c->y, c->w, c->h)) != c->mon) {
+		sendmon(c, m);
+		focus(c);
+	}
+	movingwin = None;
+}
+
+void
+movemouse(const Arg *arg)
+{
+	dragclient(selmon->sel, NULL);
 }
 
 Client *
@@ -2123,7 +2176,7 @@ resizemouse(const Arg *arg)
 	XEvent ev;
 	Time lasttime = 0;
 
-	if (!(c = selmon->sel))
+	if (movingwin || !(c = selmon->sel))
 		return;
 	if (c->isfullscreen) /* no support resizing fullscreen windows by mouse */
 		return;
@@ -2356,7 +2409,7 @@ sendmon(Client *c, Monitor *m)
 		resizeclient(c, m->mx, m->my, m->mw, m->mh);
 	else if (c->placement)
 		placeclient(c, c->placement);
-	else
+	else if (c->win != movingwin)
 		resize(c, c->x + dx, c->y + dy, c->w, c->h, 0);
 	focus(NULL);
 	arrange(NULL);
@@ -2517,6 +2570,7 @@ setup(void)
 	netatom[NetClientList] = XInternAtom(dpy, "_NET_CLIENT_LIST", False);
 	netatom[NetWMHidden] = XInternAtom(dpy, "_NET_WM_STATE_HIDDEN", False);
 	netatom[NetWMAbove] = XInternAtom(dpy, "_NET_WM_STATE_ABOVE", False);
+	netatom[NetWMMoveResize] = XInternAtom(dpy, "_NET_WM_MOVERESIZE", False);
 	/* init cursors */
 	cursor[CurNormal] = drw_cur_create(drw, XC_left_ptr);
 	cursor[CurResize] = drw_cur_create(drw, XC_sizing);
