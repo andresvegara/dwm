@@ -24,6 +24,9 @@ New floating windows are centered once in their assigned monitor's usable area,
 including transient dialogs on their parent's monitor. Docks and fullscreen
 windows keep their own placement. Oversized floating windows start at the usable
 area's top-left corner. Existing windows are not recentered on resize.
+Bluebird is the default palette. The external appearance helper can update
+bar and border colors through the private _WM_THEME property; malformed color
+lists are ignored. dwm itself does not manage GTK settings or theme persistence.
 Borders indicate focus. Applications may request activation through
 _NET_ACTIVE_WINDOW; this permits external run-or-raise tools to focus windows.
 .SH OPTIONS
