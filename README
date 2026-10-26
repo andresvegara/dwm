@@ -30,6 +30,12 @@ titlebar or Super key is needed. Maximized/snapped windows restore floating size
 under the pointer on actual motion; clicking alone does not restore them.
 Super+left-drag uses the same movement path and remains the fallback for clients
 without draggable headers. Fullscreen/docks/hidden windows are not moved.
+While moving, physical monitor edges offer halves at the sides, quarters at
+corners and maximization at the top center. The bottom center stays free.
+A thin outline previews the effective workarea placement; only left-button
+release applies it. Leaving the zone or cancelling clears it. No target is
+offered for fixed-size clients or when minimum size hints cannot fit. Resize
+operations do not show previews; keyboard placement is unchanged.
 The same protocol supports all eight pointer resize edges/corners, including
 client size hints and fixed-size protection. The edge opposite a top/left grip
 stays anchored after applying size hints. Resize from the current rectangle,
