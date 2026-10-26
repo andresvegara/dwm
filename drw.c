@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <X11/Xlib.h>
+#include <X11/Xutil.h>
 #include <X11/Xft/Xft.h>
 
 #include "drw.h"
@@ -405,6 +406,114 @@ no_match:
 		XftDrawDestroy(d);
 
 	return x + (render ? w : 0);
+}
+
+DrwIcon *
+drw_icon_create(const unsigned long *data, unsigned long count, unsigned int target)
+{
+	unsigned long i = 0, best = 0, pixels, w, h, size, chosen = 0;
+	unsigned int x, y;
+	DrwIcon *icon;
+
+	if (!data || !count || count > 262146 || !target || target > 16)
+		return NULL;
+	while (i < count) {
+		if (count - i < 2)
+			return NULL;
+		w = data[i++];
+		h = data[i++];
+		if (!w || !h || w > 512 || h > 512)
+			return NULL;
+		pixels = w * h; /* Both operands are bounded before multiplication. */
+		if (pixels > count - i)
+			return NULL;
+		size = MAX(w, h);
+		if (!chosen || (size >= target && (chosen < target || size < chosen))
+		|| (size < target && chosen < target && size > chosen)) {
+			best = i - 2;
+			chosen = size;
+		}
+		i += pixels;
+	}
+	w = data[best];
+	h = data[best + 1];
+	if (!(icon = calloc(1, sizeof *icon)))
+		return NULL;
+	icon->w = MAX(1, w * target / chosen);
+	icon->h = MAX(1, h * target / chosen);
+	if (!(icon->pixels = calloc(icon->w * icon->h, sizeof *icon->pixels))) {
+		free(icon);
+		return NULL;
+	}
+	for (y = 0; y < icon->h; y++)
+		for (x = 0; x < icon->w; x++)
+			icon->pixels[y * icon->w + x] = data[best + 2
+				+ (y * h / icon->h) * w + x * w / icon->w] & 0xffffffffUL;
+	return icon;
+}
+
+void
+drw_icon_free(DrwIcon *icon)
+{
+	if (!icon)
+		return;
+	free(icon->pixels);
+	free(icon);
+}
+
+int
+drw_icon(Drw *drw, int x, int y, const DrwIcon *icon, int invert)
+{
+	Visual *visual;
+	XImage *image;
+	unsigned long masks[3], maxima[3], bg, pixel, component;
+	unsigned int shifts[3], i, xx, yy, argb, alpha, src, back;
+
+	if (!drw || !drw->scheme || !icon || !icon->pixels)
+		return 0;
+	visual = DefaultVisual(drw->dpy, drw->screen);
+	if (!visual || visual->class != TrueColor)
+		return 0;
+	masks[0] = visual->red_mask;
+	masks[1] = visual->green_mask;
+	masks[2] = visual->blue_mask;
+	if ((masks[0] & masks[1]) || (masks[0] & masks[2]) || (masks[1] & masks[2]))
+		return 0;
+	for (i = 0; i < 3; i++) {
+		if (!masks[i] || masks[i] > 0xffffffffUL)
+			return 0;
+		for (shifts[i] = 0; !((masks[i] >> shifts[i]) & 1); shifts[i]++)
+			;
+		maxima[i] = masks[i] >> shifts[i];
+		if ((maxima[i] & (maxima[i] + 1)) || maxima[i] > 65535)
+			return 0;
+	}
+	image = XCreateImage(drw->dpy, visual, DefaultDepth(drw->dpy, drw->screen),
+		ZPixmap, 0, NULL, icon->w, icon->h, 32, 0);
+	if (!image)
+		return 0;
+	if (!(image->data = calloc(icon->h, image->bytes_per_line))) {
+		XDestroyImage(image);
+		return 0;
+	}
+	bg = drw->scheme[invert ? ColFg : ColBg].pixel;
+	for (yy = 0; yy < icon->h; yy++)
+		for (xx = 0; xx < icon->w; xx++) {
+			argb = icon->pixels[yy * icon->w + xx];
+			alpha = argb >> 24;
+			pixel = bg & ~(masks[0] | masks[1] | masks[2]);
+			for (i = 0; i < 3; i++) {
+				src = (argb >> (16 - 8 * i)) & 255;
+				back = ((bg & masks[i]) >> shifts[i]);
+				component = (src * maxima[i] * alpha / 255
+					+ back * (255 - alpha) + 127) / 255;
+				pixel |= component << shifts[i];
+			}
+			XPutPixel(image, xx, yy, pixel);
+		}
+	XPutImage(drw->dpy, drw->drawable, drw->gc, image, 0, 0, x, y, icon->w, icon->h);
+	XDestroyImage(image);
+	return 1;
 }
 
 void

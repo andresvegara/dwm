@@ -26,6 +26,16 @@ typedef struct {
 	Fnt *fonts;
 } Drw;
 
+typedef struct {
+	unsigned int w, h;
+	unsigned int *pixels;
+} DrwIcon;
+
+/* Application icons: bounded CARDINAL data, scaled ARGB cache. */
+DrwIcon *drw_icon_create(const unsigned long *data, unsigned long count, unsigned int target);
+void drw_icon_free(DrwIcon *icon);
+int drw_icon(Drw *drw, int x, int y, const DrwIcon *icon, int invert);
+
 /* Drawable abstraction */
 Drw *drw_create(Display *dpy, int screen, Window win, unsigned int w, unsigned int h);
 void drw_resize(Drw *drw, unsigned int w, unsigned int h);

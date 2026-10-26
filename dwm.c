@@ -67,7 +67,7 @@ enum { PlaceLeft = 1, PlaceRight = 2, PlaceTop = 4,
 enum { NetSupported, NetWMName, NetWMState, NetWMCheck,
        NetWMFullscreen, NetActiveWindow, NetWMWindowType,
        NetWMWindowTypeDialog, NetWMWindowTypeDock, NetClientList,
-       NetWMHidden, NetWMAbove, NetWMMoveResize, NetWMMaxH, NetWMMaxV, NetLast }; /* EWMH atoms */
+       NetWMHidden, NetWMAbove, NetWMMoveResize, NetWMMaxH, NetWMMaxV, NetWMIcon, NetLast }; /* EWMH atoms */
 enum { WMProtocols, WMDelete, WMState, WMTakeFocus, WMLast }; /* default atoms */
 enum { ClkStart, ClkTagBar, ClkLtSymbol, ClkStatusText, ClkWinTitle,
        ClkClientWin, ClkRootWin, ClkLast }; /* clicks */
@@ -97,6 +97,7 @@ typedef struct Monitor Monitor;
 typedef struct Client Client;
 struct Client {
 	char name[256];
+	DrwIcon *icon;
 	float mina, maxa;
 	int x, y, w, h;
 	int oldx, oldy, oldw, oldh;
@@ -227,6 +228,7 @@ static void endswitcher(int activate);
 static void stepswitcher(int direction);
 static void killclient(const Arg *arg);
 static void manage(Window w, XWindowAttributes *wa);
+static void updateicon(Client *c);
 static void mappingnotify(XEvent *e);
 static void maprequest(XEvent *e);
 static void monocle(Monitor *m);
@@ -1163,7 +1165,7 @@ Client *
 taskbar(Monitor *m, int clickx)
 {
 	Client *c;
-	int n = 0, i = 0, x, end, start = barstartwidth(m);
+	int n = 0, i = 0, x, end, pad, flags, start = barstartwidth(m);
 	int width = MAX(0, m->ww - gettraywidth(m) - barstatuswidth(m) - start);
 	char label[sizeof c->name + 8];
 
@@ -1182,7 +1184,16 @@ taskbar(Monitor *m, int clickx)
 		snprintf(label, sizeof label, "%s%s", c->ishidden ? "[min] " : "", c->name);
 		drw_setscheme(drw, scheme[m == selmon && c == m->sel && !c->ishidden
 			? SchemeSel : SchemeNorm]);
-		drw_text(drw, x, 0, end - x, bh, MIN(lrpad / 2, end - x), label, c->isurgent);
+		pad = MIN(lrpad / 2, end - x);
+		flags = c->isurgent;
+		if (c->icon && end - x >= pad + (int)c->icon->w + 4 + (int)TEXTW("...")) {
+			drw_text(drw, x, 0, end - x, bh, 0, "", flags);
+			if (drw_icon(drw, x + pad, (bh - c->icon->h) / 2, c->icon, flags)) {
+				pad += c->icon->w + 4;
+				flags |= 2;
+			}
+		}
+		drw_text(drw, x, 0, end - x, bh, pad, label, flags);
 	}
 	return NULL;
 }
@@ -1785,6 +1796,24 @@ killclient(const Arg *arg)
 }
 
 void
+updateicon(Client *c)
+{
+	Atom type;
+	int format;
+	unsigned long count, remaining;
+	unsigned char *data = NULL;
+
+	drw_icon_free(c->icon);
+	c->icon = NULL;
+	if (XGetWindowProperty(dpy, c->win, netatom[NetWMIcon], 0, 262146,
+		False, XA_CARDINAL, &type, &format, &count, &remaining, &data) == Success
+	&& type == XA_CARDINAL && format == 32 && !remaining && count <= 262146 && bh > 4)
+		c->icon = drw_icon_create((unsigned long *)data, count, MIN(16, bh - 4));
+	if (data)
+		XFree(data);
+}
+
+void
 manage(Window w, XWindowAttributes *wa)
 {
 	Client *c, *t = NULL;
@@ -1801,6 +1830,7 @@ manage(Window w, XWindowAttributes *wa)
 	c->oldbw = wa->border_width;
 
 	updatetitle(c);
+	updateicon(c);
 	if (XGetTransientForHint(dpy, w, &trans) && (t = wintoclient(trans))) {
 		c->mon = t->mon;
 		c->tags = t->tags;
@@ -2168,6 +2198,15 @@ propertynotify(XEvent *e)
 		return;
 	}
 
+	if (ev->atom == netatom[NetWMIcon] && (c = wintoclient(ev->window))) {
+		if (ev->state == PropertyDelete) {
+			drw_icon_free(c->icon);
+			c->icon = NULL;
+		} else
+			updateicon(c);
+		drawbar(c->mon);
+		return;
+	}
 	if (ev->window == root && ev->atom == themeatom) {
 		if (ev->state != PropertyDelete)
 			updatetheme();
@@ -2670,6 +2709,7 @@ setup(void)
 	netatom[NetWMMaxH] = XInternAtom(dpy, "_NET_WM_STATE_MAXIMIZED_HORZ", False);
 	netatom[NetWMMaxV] = XInternAtom(dpy, "_NET_WM_STATE_MAXIMIZED_VERT", False);
 	netatom[NetWMMoveResize] = XInternAtom(dpy, "_NET_WM_MOVERESIZE", False);
+	netatom[NetWMIcon] = XInternAtom(dpy, "_NET_WM_ICON", False);
 	/* init cursors */
 	cursor[CurNormal] = drw_cur_create(drw, XC_left_ptr);
 	cursor[CurResize] = drw_cur_create(drw, XC_sizing);
@@ -2986,6 +3026,7 @@ unmanage(Client *c, int destroyed)
 		if (!destroyed)
 			XDeleteProperty(dpy, c->win, frameatom);
 	}
+	drw_icon_free(c->icon);
 	free(c);
 	focus(NULL);
 	updateclientlist();
