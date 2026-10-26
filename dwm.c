@@ -2237,12 +2237,7 @@ restack(Monitor *m)
 	XWindowChanges wc;
 
 	drawbar(m);
-	if (!m->sel) {
-		if (m->showbar)
-			XRaiseWindow(dpy, m->barwin);
-		return;
-	}
-	if (m->sel->isfloating || !m->lt[m->sellt]->arrange)
+	if (m->sel && (m->sel->isfloating || !m->lt[m->sellt]->arrange))
 		XRaiseWindow(dpy, m->sel->win);
 	if (m->lt[m->sellt]->arrange) {
 		wc.stack_mode = Below;
@@ -2259,11 +2254,11 @@ restack(Monitor *m)
 	for (c = m->clients; c; c = c->next)
 		if (c->isabove && ISVISIBLE(c) && !c->isdock)
 			XRaiseWindow(dpy, c->win);
-	if (m->sel->isabove)
+	if (m->sel && m->sel->isabove)
 		XRaiseWindow(dpy, m->sel->win);
 	if (m->showbar)
 		XRaiseWindow(dpy, m->barwin);
-	if (m->sel->isfullscreen)
+	if (m->sel && m->sel->isfullscreen)
 		XRaiseWindow(dpy, m->sel->win);
 	for (c = m->clients; c; c = c->next)
 		stacktitle(c);
