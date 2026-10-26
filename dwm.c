@@ -63,11 +63,11 @@
 enum { CurNormal, CurResize, CurMove, CurLast }; /* cursor */
 enum { SchemeNorm, SchemeSel }; /* color schemes */
 enum { PlaceLeft = 1, PlaceRight = 2, PlaceTop = 4,
-       PlaceBottom = 8, PlaceMax = 16 }; /* window placement */
+       PlaceBottom = 8, PlaceMax = 16, PlaceMaxH = 32, PlaceMaxV = 64 }; /* window placement */
 enum { NetSupported, NetWMName, NetWMState, NetWMCheck,
        NetWMFullscreen, NetActiveWindow, NetWMWindowType,
        NetWMWindowTypeDialog, NetWMWindowTypeDock, NetClientList,
-       NetWMHidden, NetWMAbove, NetWMMoveResize, NetLast }; /* EWMH atoms */
+       NetWMHidden, NetWMAbove, NetWMMoveResize, NetWMMaxH, NetWMMaxV, NetLast }; /* EWMH atoms */
 enum { WMProtocols, WMDelete, WMState, WMTakeFocus, WMLast }; /* default atoms */
 enum { ClkStart, ClkTagBar, ClkLtSymbol, ClkStatusText, ClkWinTitle,
        ClkClientWin, ClkRootWin, ClkLast }; /* clicks */
@@ -234,6 +234,8 @@ static void motionnotify(XEvent *e);
 static void movemouse(const Arg *arg);
 static Client *nexttiled(Client *c);
 static void placeclient(Client *c, unsigned int placement);
+static unsigned int maxaxes(Client *c);
+static void setmaximized(Client *c, unsigned int axes);
 static void pop(Client *c);
 static void propertynotify(XEvent *e);
 static void quit(const Arg *arg);
@@ -895,6 +897,7 @@ clientmessage(XEvent *e)
 {
 	XClientMessageEvent *cme = &e->xclient;
 	Client *c = wintoclient(cme->window);
+	unsigned int axes, requested;
 
 	if (traywin && cme->window == traywin && cme->message_type == trayopcode) {
 		if (cme->format == 32 && cme->data.l[1] == 0)
@@ -914,6 +917,15 @@ clientmessage(XEvent *e)
 	} else if (cme->message_type == netatom[NetWMState]) {
 		if (cme->format != 32 || cme->data.l[0] < 0 || cme->data.l[0] > 2)
 			return;
+		axes = maxaxes(c);
+		requested = 0;
+		if (cme->data.l[1] == netatom[NetWMMaxH] || cme->data.l[2] == netatom[NetWMMaxH])
+			requested |= PlaceMaxH;
+		if (cme->data.l[1] == netatom[NetWMMaxV] || cme->data.l[2] == netatom[NetWMMaxV])
+			requested |= PlaceMaxV;
+		if (requested)
+			setmaximized(c, cme->data.l[0] == 0 ? axes & ~requested
+				: cme->data.l[0] == 1 ? axes | requested : axes ^ requested);
 		if (cme->data.l[1] == netatom[NetWMFullscreen]
 		|| cme->data.l[2] == netatom[NetWMFullscreen])
 			setfullscreen(c, (cme->data.l[0] == 1 /* _NET_WM_STATE_ADD    */
@@ -1682,11 +1694,13 @@ updatestate(Client *c)
 		False, XA_ATOM, &actual, &format, &n, &extra, &data) != Success
 	|| actual != XA_ATOM || format != 32 || extra)
 		n = 0;
-	states = ecalloc(n + 3, sizeof(Atom));
+	states = ecalloc(n + 5, sizeof(Atom));
 	for (i = 0; i < n; i++)
 		if (((Atom *)data)[i] != netatom[NetWMFullscreen]
 		&& ((Atom *)data)[i] != netatom[NetWMHidden]
-		&& ((Atom *)data)[i] != netatom[NetWMAbove])
+		&& ((Atom *)data)[i] != netatom[NetWMAbove]
+		&& ((Atom *)data)[i] != netatom[NetWMMaxH]
+		&& ((Atom *)data)[i] != netatom[NetWMMaxV])
 			states[count++] = ((Atom *)data)[i];
 	if (c->isfullscreen)
 		states[count++] = netatom[NetWMFullscreen];
@@ -1694,6 +1708,10 @@ updatestate(Client *c)
 		states[count++] = netatom[NetWMHidden];
 	if (c->isabove)
 		states[count++] = netatom[NetWMAbove];
+	if (maxaxes(c) & PlaceMaxH)
+		states[count++] = netatom[NetWMMaxH];
+	if (maxaxes(c) & PlaceMaxV)
+		states[count++] = netatom[NetWMMaxV];
 	XChangeProperty(dpy, c->win, netatom[NetWMState], XA_ATOM, 32,
 		PropModeReplace, (unsigned char *)states, count);
 	if (data)
@@ -1814,6 +1832,7 @@ manage(Window w, XWindowAttributes *wa)
 	if (!c->isfloating)
 		c->isfloating = c->oldstate = trans != None || c->isfixed;
 	centerfloating(c);
+	updatewindowtype(c);
 	configure(c); /* propagates border_width and initial position */
 	if (c->isfloating)
 		XRaiseWindow(dpy, c->win);
@@ -1973,6 +1992,7 @@ dragclient(Client *c, XClientMessageEvent *request)
 				if (nx == c->x && ny == c->y && nw == c->w && nh == c->h)
 					continue;
 				c->placement = 0;
+				updatestate(c);
 				if (!c->isfloating) {
 					c->isfloating = 1;
 					arrange(c->mon);
@@ -2037,13 +2057,32 @@ nexttiled(Client *c)
 	return c;
 }
 
+unsigned int
+maxaxes(Client *c)
+{
+	return c->placement == PlaceMax ? PlaceMaxH | PlaceMaxV
+		: c->placement & (PlaceMaxH | PlaceMaxV);
+}
+
+void
+setmaximized(Client *c, unsigned int axes)
+{
+	if (axes == maxaxes(c))
+		return;
+	placeclient(c, axes == (PlaceMaxH | PlaceMaxV) ? PlaceMax
+		: axes ? axes : c->restoreplacement);
+}
+
 void
 placeclient(Client *c, unsigned int placement)
 {
 	Monitor *m = c->mon;
 	int x, y, w, h, left, top;
+	unsigned int axes, base;
 
-	if (c->isfullscreen || c->isfixed
+	if (!c->hintsvalid)
+		updatesizehints(c);
+	if (c->isdock || c->isfullscreen || c->isfixed
 	|| m->ww <= 2 * c->bw || m->wh <= 2 * c->bw)
 		return;
 	if (!c->placement && placement) {
@@ -2052,8 +2091,11 @@ placeclient(Client *c, unsigned int placement)
 		c->floatw = c->w;
 		c->floath = c->h;
 	}
-	if (placement == PlaceMax && c->placement != PlaceMax)
+	axes = placement == PlaceMax ? PlaceMaxH | PlaceMaxV
+		: placement & (PlaceMaxH | PlaceMaxV);
+	if (axes && !maxaxes(c))
 		c->restoreplacement = c->placement;
+	base = axes ? c->restoreplacement : placement;
 	c->placement = placement;
 	if (!placement) {
 		w = MAX(1, MIN(c->floatw, m->ww - 2 * c->bw));
@@ -2067,23 +2109,38 @@ placeclient(Client *c, unsigned int placement)
 		h = m->wh;
 		left = w / 2;
 		top = h / 2;
-		if (placement & PlaceLeft)
+		if (base & PlaceLeft)
 			w = left;
-		else if (placement & PlaceRight) {
+		else if (base & PlaceRight) {
 			x += left;
 			w -= left;
 		}
-		if (placement & PlaceTop)
+		if (base & PlaceTop)
 			h = top;
-		else if (placement & PlaceBottom) {
+		else if (base & PlaceBottom) {
 			y += top;
 			h -= top;
 		}
 		w = MAX(1, w - 2 * c->bw);
 		h = MAX(1, h - 2 * c->bw);
+		if (axes) {
+			if (!base) {
+				x = c->floatx; y = c->floaty;
+				w = c->floatw; h = c->floath;
+			}
+			if (axes & PlaceMaxH) {
+				x = m->wx;
+				w = m->ww - 2 * c->bw;
+			}
+			if (axes & PlaceMaxV) {
+				y = m->wy;
+				h = m->wh - 2 * c->bw;
+			}
+		}
 	}
 	c->isfloating = 1;
 	resize(c, x, y, w, h, 0);
+	updatestate(c);
 }
 
 void
@@ -2215,7 +2272,9 @@ resizemouse(const Arg *arg)
 
 	if (movingwin || !(c = selmon->sel))
 		return;
-	if (c->isfullscreen) /* no support resizing fullscreen windows by mouse */
+	if (!c->hintsvalid)
+		updatesizehints(c);
+	if (c->isdock || c->isfullscreen || c->isfixed)
 		return;
 	restack(selmon);
 	ocx = c->x;
@@ -2225,6 +2284,7 @@ resizemouse(const Arg *arg)
 		return;
 	XWarpPointer(dpy, None, c->win, 0, 0, 0, 0, c->w + c->bw - 1, c->h + c->bw - 1);
 	c->placement = 0;
+	updatestate(c);
 	do {
 		XMaskEvent(dpy, MOUSEMASK|ExposureMask|SubstructureRedirectMask, &ev);
 		switch(ev.type) {
@@ -2607,6 +2667,8 @@ setup(void)
 	netatom[NetClientList] = XInternAtom(dpy, "_NET_CLIENT_LIST", False);
 	netatom[NetWMHidden] = XInternAtom(dpy, "_NET_WM_STATE_HIDDEN", False);
 	netatom[NetWMAbove] = XInternAtom(dpy, "_NET_WM_STATE_ABOVE", False);
+	netatom[NetWMMaxH] = XInternAtom(dpy, "_NET_WM_STATE_MAXIMIZED_HORZ", False);
+	netatom[NetWMMaxV] = XInternAtom(dpy, "_NET_WM_STATE_MAXIMIZED_VERT", False);
 	netatom[NetWMMoveResize] = XInternAtom(dpy, "_NET_WM_MOVERESIZE", False);
 	/* init cursors */
 	cursor[CurNormal] = drw_cur_create(drw, XC_left_ptr);
@@ -2704,7 +2766,7 @@ snapclient(const Arg *arg)
 	default:
 		return;
 	}
-	placement = c->placement == PlaceMax ? 0 : c->placement;
+	placement = maxaxes(c) ? 0 : c->placement;
 	placement = (placement & arg->ui) ? placement & ~axis
 		: (placement & ~axis) | arg->ui;
 	placeclient(c, placement);
@@ -3223,17 +3285,37 @@ updatetitle(Client *c)
 void
 updatewindowtype(Client *c)
 {
-	Atom state = getatomprop(c, netatom[NetWMState]);
-	Atom wtype = getatomprop(c, netatom[NetWMWindowType]);
+	Atom actual = None, wtype = getatomprop(c, netatom[NetWMWindowType]);
+	unsigned char *data = NULL;
+	unsigned long n = 0, extra, i;
+	unsigned int axes = 0;
+	int format = 0, fullscreen = 0;
 
-	if (state == netatom[NetWMFullscreen])
-		setfullscreen(c, 1);
+	if (XGetWindowProperty(dpy, c->win, netatom[NetWMState], 0, 1024,
+		False, XA_ATOM, &actual, &format, &n, &extra, &data) == Success
+	&& actual == XA_ATOM && format == 32 && !extra)
+		for (i = 0; i < n; i++) {
+			if (((Atom *)data)[i] == netatom[NetWMFullscreen])
+				fullscreen = 1;
+			if (((Atom *)data)[i] == netatom[NetWMMaxH])
+				axes |= PlaceMaxH;
+			if (((Atom *)data)[i] == netatom[NetWMMaxV])
+				axes |= PlaceMaxV;
+		}
+	if (data)
+		XFree(data);
 	if (wtype == netatom[NetWMWindowTypeDialog])
 		c->isfloating = 1;
 	if (wtype == netatom[NetWMWindowTypeDock]) {
 		c->isdock = c->isfloating = c->neverfocus = 1;
 		c->bw = 0;
 		XSetWindowBorderWidth(dpy, c->win, 0);
+	}
+	if (!c->isdock) {
+		if (fullscreen)
+			setfullscreen(c, 1);
+		if (axes && c->hintsvalid)
+			setmaximized(c, axes);
 	}
 }
 
