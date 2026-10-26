@@ -10,15 +10,15 @@ static const char *fonts[] = {
 	"Hack Nerd Font Mono:size=11",
 	"Noto Color Emoji:size=11"
 };
-static const char col_gray1[] = "#2d2d2d";
-static const char col_gray2[] = "#999999";
-static const char col_gray3[] = "#cccccc";
-static const char col_gray4[] = "#ffffff";
-static const char col_blue[] = "#6699cc";
+static const char col_gray1[] = "#212936";
+static const char col_gray2[] = "#909090";
+static const char col_gray3[] = "#f7f7f7";
+static const char col_gray4[] = "#f5f5f5";
+static const char col_blue[] = "#7e9ebd";
 static const char *colors[][3] = {
 	/*               fg         bg         border   */
 	[SchemeNorm] = { col_gray3, col_gray1, col_gray2 },
-	[SchemeSel]  = { col_gray4, col_gray1, col_blue  },
+	[SchemeSel]  = { col_gray4, col_blue,  col_blue  },
 };
 
 /* tagging */
