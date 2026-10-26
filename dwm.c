@@ -327,6 +327,7 @@ static char windowsetup[SetupLength + 1];
 static int setuppending;
 static int running = 1;
 static unsigned long focusserial;
+static Window focusedclient;
 static Window switchwin, *switchitems;
 static size_t switchcount, switchindex;
 static Monitor *switchmon;
@@ -1231,8 +1232,9 @@ focus(Client *c)
 	if (selmon->sel && selmon->sel != c)
 		unfocus(selmon->sel, 0);
 	if (c) {
-		if (selmon->sel != c || !c->focused)
+		if (focusedclient != c->win || !c->focused)
 			c->focused = ++focusserial;
+		focusedclient = c->win;
 		if (c->isurgent)
 			seturgent(c, 0);
 		detachstack(c);
@@ -1241,6 +1243,7 @@ focus(Client *c)
 		XSetWindowBorder(dpy, c->win, scheme[SchemeSel][ColBorder].pixel);
 		setfocus(c);
 	} else {
+		focusedclient = None;
 		XSetInputFocus(dpy, root, RevertToPointerRoot, CurrentTime);
 		XDeleteProperty(dpy, root, netatom[NetActiveWindow]);
 	}
