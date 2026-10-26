@@ -196,7 +196,6 @@ static void detachstack(Client *c);
 static Monitor *dirtomon(int dir);
 static void drawbar(Monitor *m);
 static void drawbars(void);
-static void enternotify(XEvent *e);
 static void expose(XEvent *e);
 static void focus(Client *c);
 static void focusin(XEvent *e);
@@ -309,7 +308,6 @@ static void (*handler[LASTEvent]) (XEvent *) = {
 	[ConfigureRequest] = configurerequest,
 	[ConfigureNotify] = configurenotify,
 	[DestroyNotify] = destroynotify,
-	[EnterNotify] = enternotify,
 	[Expose] = expose,
 	[FocusIn] = focusin,
 	[KeyPress] = keypress,
@@ -529,7 +527,8 @@ buttonpress(XEvent *e)
 	}
 	click = ClkRootWin;
 	/* focus monitor if necessary */
-	if ((m = wintomon(ev->window)) && m != selmon) {
+	m = ev->window == root ? recttomon(ev->x_root, ev->y_root, 1, 1) : wintomon(ev->window);
+	if (m && m != selmon) {
 		unfocus(selmon->sel, 1);
 		selmon = m;
 		focus(NULL);
@@ -1169,36 +1168,6 @@ drawbars(void)
 		for (c = m->clients; c; c = c->next)
 			drawtitle(c);
 	}
-}
-
-void
-enternotify(XEvent *e)
-{
-	Client *c;
-	Monitor *m;
-	XCrossingEvent *ev = &e->xcrossing;
-
-	if (switchwin)
-		return;
-	if ((ev->mode != NotifyNormal || ev->detail == NotifyInferior) && ev->window != root)
-		return;
-	c = wintoclient(ev->window);
-	if (!c)
-		c = titleclient(ev->window);
-	if (c)
-		m = c->mon;
-	else if (ev->window == root)
-		m = recttomon(ev->x_root, ev->y_root, 1, 1);
-	else
-		m = wintomon(ev->window);
-	if (c && c->isdock)
-		c = NULL;
-	if (m != selmon) {
-		unfocus(selmon->sel, 1);
-		selmon = m;
-	} else if (!c || c == selmon->sel)
-		return;
-	focus(c);
 }
 
 void
@@ -1877,7 +1846,6 @@ monocle(Monitor *m)
 void
 motionnotify(XEvent *e)
 {
-	Monitor *m;
 	XMotionEvent *ev = &e->xmotion;
 	Client *c = titleclient(ev->window);
 
@@ -1885,14 +1853,6 @@ motionnotify(XEvent *e)
 		c->hoverbutton = titlebutton(c, ev->x);
 		drawtitle(c);
 		return;
-	}
-	if (switchwin || ev->window != root)
-		return;
-	m = recttomon(ev->x_root, ev->y_root, 1, 1);
-	if (m != selmon) {
-		unfocus(selmon->sel, 1);
-		selmon = m;
-		focus(NULL);
 	}
 }
 
