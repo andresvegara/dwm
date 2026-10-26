@@ -904,7 +904,7 @@ clientmessage(XEvent *e)
 	if (!c || c->isdock)
 		return;
 	if (cme->message_type == netatom[NetWMMoveResize]) {
-		if (cme->format != 32 || cme->data.l[2] != 8
+		if (cme->format != 32 || cme->data.l[2] < 0 || cme->data.l[2] > 8
 		|| (cme->data.l[3] != 0 && cme->data.l[3] != Button1)
 		|| cme->data.l[4] < 0 || cme->data.l[4] > 2
 		|| cme->data.l[0] < SHRT_MIN || cme->data.l[0] > SHRT_MAX
@@ -1896,8 +1896,12 @@ motionnotify(XEvent *e)
 void
 dragclient(Client *c, XClientMessageEvent *request)
 {
-	int x, y, px, py, ocx, ocy, nx, ny, offsety;
-	unsigned int mask;
+	static const unsigned int edges[] = {
+		PlaceTop | PlaceLeft, PlaceTop, PlaceTop | PlaceRight, PlaceRight,
+		PlaceBottom | PlaceRight, PlaceBottom, PlaceBottom | PlaceLeft, PlaceLeft
+	};
+	int x, y, px, py, ocx, ocy, ocw, och, nx, ny, nw, nh, offsety;
+	unsigned int mask, sides = request && request->data.l[2] < 8 ? edges[request->data.l[2]] : 0;
 	double anchor;
 	Window dummy, win;
 	Monitor *m;
@@ -1906,8 +1910,14 @@ dragclient(Client *c, XClientMessageEvent *request)
 
 	if (movingwin || !c || c->isdock || c->isfullscreen || !ISVISIBLE(c))
 		return;
+	if (sides) {
+		if (!c->hintsvalid)
+			updatesizehints(c);
+		if (c->isfixed)
+			return;
+	}
 	if (XGrabPointer(dpy, root, False, MOUSEMASK, GrabModeAsync, GrabModeAsync,
-		None, cursor[CurMove]->cursor, CurrentTime) != GrabSuccess)
+		None, cursor[sides ? CurResize : CurMove]->cursor, CurrentTime) != GrabSuccess)
 		return;
 	/* A release can precede the client's request; never wait for a lost release. */
 	if (!XQueryPointer(dpy, root, &dummy, &dummy, &x, &y, &px, &py, &mask)
@@ -1924,6 +1934,8 @@ dragclient(Client *c, XClientMessageEvent *request)
 	movingwin = win = c->win;
 	ocx = c->x;
 	ocy = c->y;
+	ocw = c->w;
+	och = c->h;
 	anchor = MAX(0.0, MIN(1.0, (double)(x - c->x) / WIDTH(c)));
 	offsety = MAX(0, y - c->y);
 	while (!XNextEvent(dpy, &ev)) {
@@ -1943,6 +1955,31 @@ dragclient(Client *c, XClientMessageEvent *request)
 			if ((ev.xmotion.time - lasttime) <= (1000 / refreshrate))
 				continue;
 			lasttime = ev.xmotion.time;
+			if (sides) {
+				if (!c->hintsvalid)
+					updatesizehints(c);
+				if (c->isfixed)
+					break;
+				nw = MAX(1, ocw + ((sides & PlaceLeft) ? x - ev.xmotion.x_root
+					: (sides & PlaceRight) ? ev.xmotion.x_root - x : 0));
+				nh = MAX(1, och + ((sides & PlaceTop) ? y - ev.xmotion.y_root
+					: (sides & PlaceBottom) ? ev.xmotion.y_root - y : 0));
+				nx = (sides & PlaceLeft) ? ocx + ocw - nw : ocx;
+				ny = (sides & PlaceTop) ? ocy + och - nh : ocy;
+				applysizehints(c, &nx, &ny, &nw, &nh, 1);
+				/* Size hints must not move the edge opposite the dragged grip. */
+				if (sides & PlaceLeft) nx = ocx + ocw - nw;
+				if (sides & PlaceTop) ny = ocy + och - nh;
+				if (nx == c->x && ny == c->y && nw == c->w && nh == c->h)
+					continue;
+				c->placement = 0;
+				if (!c->isfloating) {
+					c->isfloating = 1;
+					arrange(c->mon);
+				}
+				resizeclient(c, nx, ny, nw, nh);
+				continue;
+			}
 			nx = ocx + (ev.xmotion.x_root - x);
 			ny = ocy + (ev.xmotion.y_root - y);
 			if (nx == ocx && ny == ocy)
