@@ -48,6 +48,8 @@ static const char *dmenucmd[] = {
 	"wm-launcher", "-m", dmenumon, NULL
 };
 static const char *commandcmd[] = { "wm-command", "-m", dmenumon, NULL };
+static const char *windowcmd[] = { "wm-launcher", "--windows", NULL };
+static const char *menucmd[] = { "wm-launcher", "--session-menu", NULL };
 static const char *termcmd[] = { "jumpapp", "-n", "alacritty", NULL };
 static const char *browsercmd[] = { "jumpapp", "-n", "brave", NULL };
 static const char *chromiumcmd[] = { "jumpapp", "-n", "chromium", NULL };
@@ -96,8 +98,9 @@ static const Key keys[] = {
 	{ MODKEY,            XK_ntilde,    centerclient,     {0} },
 	{ MODKEY|ShiftMask,  XK_Left,      tagmon,           {.i = -1 } },
 	{ MODKEY|ShiftMask,  XK_Right,     tagmon,           {.i = +1 } },
-	{ Mod1Mask,          XK_Tab,       focusstack,       {.i = +1 } },
-	{ Mod1Mask|ShiftMask,XK_Tab,       focusstack,       {.i = -1 } },
+	{ Mod1Mask,          XK_Tab,       spawn,            {.v = windowcmd } },
+	{ Mod1Mask|ShiftMask,XK_Tab,       spawn,            {.v = windowcmd } },
+	{ MODKEY,            XK_Escape,    spawn,            {.v = menucmd } },
 	{ MODKEY,            XK_q,         killclient,       {0} },
 	{ ControlMask,       XK_q,         killclient,       {0} },
 	{ Mod1Mask,          XK_F4,        killclient,       {0} },
@@ -123,6 +126,7 @@ static const Key keys[] = {
 
 static const Button buttons[] = {
 	/* click         event mask  button   function     argument */
+	{ ClkRootWin,    0,          Button3, spawn,       {.v = menucmd } },
 	{ ClkClientWin,  MODKEY,     Button1, movemouse,   {0} },
 	{ ClkClientWin,  MODKEY,     Button3, resizemouse, {0} },
 };
