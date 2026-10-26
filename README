@@ -18,7 +18,11 @@ The native bar stays visible at the bottom of every monitor, reserving usable
 space; fullscreen windows may cover it. Inicio opens an extensible Rofi menu.
 The remaining area shows ungrouped tasks for that monitor, including minimized
 windows. Click to activate/restore; click the focused task to minimize. Tags and
-layout indicators are hidden. Titlebars default to off; showtitlebar in config.h
+layout indicators are hidden. Task buttons use application _NET_WM_ICON data
+when available, scaled proportionally to at most 16 pixels and composited over
+the button background. Invalid/missing icons, unsupported visuals and narrow
+buttons retain text only; no icon theme lookup or extra library is needed.
+Titlebars default to off; showtitlebar in config.h
 (or the config.def.h default) enables them after rebuilding.
 Applications can move their windows by dragging their own header or free tab-strip
 area when they send the standard _NET_WM_MOVERESIZE pointer-move request. No extra
