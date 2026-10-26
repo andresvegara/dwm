@@ -30,6 +30,11 @@ The same protocol supports all eight pointer resize edges/corners, including
 client size hints and fixed-size protection. The edge opposite a top/left grip
 stays anchored after applying size hints. Resize from the current rectangle,
 including maximized/snapped placement; a real size change clears that placement.
+Standard _NET_WM_STATE_MAXIMIZED_HORZ/VERT requests support each axis and both
+axes together, sharing Super+M's saved floating/snapped geometry. Applications
+choose whether their own header clicks request maximization; dwm does not
+intercept those clicks. Fullscreen remains separate and fixed-size clients do
+not maximize. Moving or resizing manually clears the published maximize state.
 Application-requested drags never warp the pointer. Keyboard move/resize directions
 are not implemented; the existing keyboard placement shortcuts remain available.
 Status and the built-in XEmbed tray stay
