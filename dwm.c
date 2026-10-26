@@ -336,6 +336,7 @@ static int setuppending;
 static int running = 1;
 static unsigned long focusserial;
 static Window focusedclient, movingwin;
+static int dragfailed;
 static Window switchwin, *switchitems;
 static size_t switchcount, switchindex;
 static Monitor *switchmon;
@@ -1942,6 +1943,118 @@ motionnotify(XEvent *e)
 	}
 }
 
+static void
+placementrect(Monitor *m, unsigned int placement, int *x, int *y, int *w, int *h)
+{
+	int left = m->ww / 2, top = m->wh / 2;
+
+	*x = m->wx; *y = m->wy; *w = m->ww; *h = m->wh;
+	if (placement & PlaceLeft)
+		*w = left;
+	else if (placement & PlaceRight) {
+		*x += left;
+		*w -= left;
+	}
+	if (placement & PlaceTop)
+		*h = top;
+	else if (placement & PlaceBottom) {
+		*y += top;
+		*h -= top;
+	}
+}
+
+static unsigned int
+dragzone(int x, int y, Monitor **target)
+{
+	Monitor *m;
+	unsigned int side, vertical;
+
+	*target = NULL;
+	for (m = mons; m; m = m->next) {
+		if (x < m->mx || x >= m->mx + m->mw
+		|| y < m->my || y >= m->my + m->mh)
+			continue;
+		*target = m;
+		side = x - m->mx < snap ? PlaceLeft
+			: m->mx + m->mw - 1 - x < snap ? PlaceRight : 0;
+		vertical = y - m->my < snap ? PlaceTop
+			: m->my + m->mh - 1 - y < snap ? PlaceBottom : 0;
+		return side ? side | vertical : vertical == PlaceTop ? PlaceMax : 0;
+	}
+	return 0;
+}
+
+static int
+dragrect(Client *c, Monitor *m, unsigned int placement, int *x, int *y, int *w, int *h)
+{
+	Client candidate;
+	int right, bottom;
+
+	if (!c->hintsvalid)
+		updatesizehints(c);
+	if (c->isfixed || c->isdock || c->isfullscreen || !ISVISIBLE(c))
+		return 0;
+	placementrect(m, placement, x, y, w, h);
+	right = *x + *w;
+	bottom = *y + *h;
+	*w -= 2 * c->bw;
+	*h -= 2 * c->bw;
+	if (*w < MAX(1, c->minw) || *h < MAX(1, titleh(c))
+	|| *h - titleh(c) < c->minh)
+		return 0;
+	candidate = *c;
+	candidate.mon = m;
+	candidate.isfloating = 1;
+	applysizehints(&candidate, x, y, w, h, 0);
+	*w += 2 * c->bw;
+	*h += 2 * c->bw;
+	return *x >= m->wx && *y >= m->wy && *x + *w <= right && *y + *h <= bottom
+		&& *w - 2 * c->bw >= c->minw
+		&& *h - 2 * c->bw - titleh(c) >= c->minh;
+}
+
+static void
+dragpreviewclear(Window *preview)
+{
+	int i;
+
+	for (i = 0; i < 4; i++)
+		if (preview[i]) {
+			XDestroyWindow(dpy, preview[i]);
+			preview[i] = None;
+		}
+}
+
+static int
+dragpreview(Window *preview, Client *c, Monitor *m, unsigned int *placement)
+{
+	int i, x, y, w, h, thickness;
+	XSetWindowAttributes wa = { .override_redirect = True,
+		.background_pixel = scheme[SchemeSel][ColBorder].pixel };
+
+	if (!*placement || !dragrect(c, m, *placement, &x, &y, &w, &h)) {
+		*placement = 0;
+		dragpreviewclear(preview);
+		return !dragfailed;
+	}
+	thickness = MIN(2, MIN(w, h));
+	for (i = 0; i < 4 && !dragfailed; i++) {
+		if (!preview[i])
+			preview[i] = XCreateWindow(dpy, root, x, y, 1, 1, 0,
+				CopyFromParent, InputOutput, CopyFromParent,
+				CWOverrideRedirect|CWBackPixel, &wa);
+		if (!preview[i])
+			return 0;
+		XMoveResizeWindow(dpy, preview[i],
+			x + (i == 3 ? w - thickness : 0),
+			y + (i == 1 ? h - thickness : 0),
+			i < 2 ? w : thickness, i < 2 ? thickness : h);
+		XMapRaised(dpy, preview[i]);
+	}
+	XSync(dpy, False);
+	return !dragfailed;
+}
+
 void
 dragclient(Client *c, XClientMessageEvent *request)
 {
@@ -1952,8 +2065,10 @@ dragclient(Client *c, XClientMessageEvent *request)
 	int x, y, px, py, ocx, ocy, ocw, och, nx, ny, nw, nh, offsety;
 	unsigned int mask, sides = request && request->data.l[2] < 8 ? edges[request->data.l[2]] : 0;
 	double anchor;
-	Window dummy, win;
-	Monitor *m;
+	Window dummy, win, preview[4] = { None };
+	Monitor *m, *target = NULL;
+	unsigned int placement = 0;
+	int released = 0;
 	XEvent ev;
 	Time lasttime = 0;
 
@@ -1980,6 +2095,7 @@ dragclient(Client *c, XClientMessageEvent *request)
 	}
 	focus(c);
 	restack(c->mon);
+	dragfailed = 0;
 	movingwin = win = c->win;
 	ocx = c->x;
 	ocy = c->y;
@@ -1994,13 +2110,33 @@ dragclient(Client *c, XClientMessageEvent *request)
 			XPutBackEvent(dpy, &ev);
 			break;
 		}
-		if (ev.type == ButtonRelease && ev.xbutton.button == Button1)
+		if (dragfailed)
 			break;
+		if ((ev.type == UnmapNotify && ev.xunmap.window == win)
+		|| (ev.type == DestroyNotify && ev.xdestroywindow.window == win)) {
+			if (handler[ev.type])
+				handler[ev.type](&ev);
+			break;
+		}
+		if (ev.type == ButtonRelease && ev.xbutton.button == Button1) {
+			released = 1;
+			break;
+		}
 		if (ev.type == ClientMessage && ev.xclient.window == win
 		&& ev.xclient.message_type == netatom[NetWMMoveResize]
 		&& ev.xclient.format == 32 && ev.xclient.data.l[2] == 11)
 			break;
 		if (ev.type == MotionNotify) {
+			if (!sides) {
+				if (!c->hintsvalid)
+					updatesizehints(c);
+				placement = c->isfixed ? 0
+					: dragzone(ev.xmotion.x_root, ev.xmotion.y_root, &target);
+				if (!dragpreview(preview, c, target, &placement)) {
+					dragfailed = 1;
+					break;
+				}
+			}
 			if ((ev.xmotion.time - lasttime) <= (1000 / refreshrate))
 				continue;
 			lasttime = ev.xmotion.time;
@@ -2063,13 +2199,27 @@ dragclient(Client *c, XClientMessageEvent *request)
 			c = wintoclient(win);
 			if (!c || c->isdock || c->isfullscreen || !ISVISIBLE(c))
 				break;
+			if (!sides && placement && !dragpreview(preview, c, target, &placement)) {
+				dragfailed = 1;
+				break;
+			}
 		}
 	}
+	if (released && placement && (c = wintoclient(win))
+	&& !dragrect(c, target, placement, &nx, &ny, &nw, &nh))
+		placement = 0;
+	dragpreviewclear(preview);
+	XSync(dpy, False);
 	XUngrabPointer(dpy, CurrentTime);
-	if ((c = wintoclient(win)) && !c->isfullscreen && ISVISIBLE(c)
-	&& (m = recttomon(c->x, c->y, c->w, c->h)) != c->mon) {
-		sendmon(c, m);
-		focus(c);
+	if (released && !dragfailed && (c = wintoclient(win))
+	&& !c->isdock && !c->isfullscreen && ISVISIBLE(c)) {
+		m = placement ? target : recttomon(c->x, c->y, c->w, c->h);
+		if (m != c->mon) {
+			sendmon(c, m);
+			focus(c);
+		}
+		if (placement && !sides)
+			placeclient(c, placement);
 	}
 	movingwin = None;
 }
@@ -2107,7 +2257,7 @@ void
 placeclient(Client *c, unsigned int placement)
 {
 	Monitor *m = c->mon;
-	int x, y, w, h, left, top;
+	int x, y, w, h;
 	unsigned int axes, base;
 
 	if (!c->hintsvalid)
@@ -2133,24 +2283,7 @@ placeclient(Client *c, unsigned int placement)
 		x = MAX(m->wx, MIN(c->floatx, m->wx + m->ww - w - 2 * c->bw));
 		y = MAX(m->wy, MIN(c->floaty, m->wy + m->wh - h - 2 * c->bw));
 	} else {
-		x = m->wx;
-		y = m->wy;
-		w = m->ww;
-		h = m->wh;
-		left = w / 2;
-		top = h / 2;
-		if (base & PlaceLeft)
-			w = left;
-		else if (base & PlaceRight) {
-			x += left;
-			w -= left;
-		}
-		if (base & PlaceTop)
-			h = top;
-		else if (base & PlaceBottom) {
-			y += top;
-			h -= top;
-		}
+		placementrect(m, base, &x, &y, &w, &h);
 		w = MAX(1, w - 2 * c->bw);
 		h = MAX(1, h - 2 * c->bw);
 		if (axes) {
@@ -3558,6 +3691,10 @@ wintomon(Window w)
 int
 xerror(Display *dpy, XErrorEvent *ee)
 {
+	if (movingwin) {
+		dragfailed = 1;
+		return 0;
+	}
 	if (ee->error_code == BadWindow
 	|| (ee->request_code == X_SetInputFocus && ee->error_code == BadMatch)
 	|| (ee->request_code == X_PolyText8 && ee->error_code == BadDrawable)
