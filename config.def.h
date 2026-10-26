@@ -51,6 +51,7 @@ static const char *dmenucmd[] = {
 static const char *commandcmd[] = { "wm-command", "-m", dmenumon, NULL };
 static const char *helpcmd[] = { "wm-launcher", "--shortcuts", NULL };
 static const char *menucmd[] = { "wm-launcher", "--session-menu", NULL };
+static const char *startcmd[] = { "wm-launcher", "--start", NULL };
 static const char *termcmd[] = { "jumpapp", "-n", "alacritty", NULL };
 static const char *browsercmd[] = { "jumpapp", "-n", "brave", NULL };
 static const char *chromiumcmd[] = { "jumpapp", "-n", "chromium", NULL };
@@ -130,6 +131,7 @@ static const Key keys[] = {
 
 static const Button buttons[] = {
 	/* click         event mask  button   function     argument */
+	{ ClkStart,      0,          Button1, spawn,       {.v = startcmd } },
 	{ ClkRootWin,    0,          Button3, spawn,       {.v = menucmd } },
 	{ ClkClientWin,  MODKEY,     Button1, movemouse,   {0} },
 	{ ClkClientWin,  MODKEY,     Button3, resizemouse, {0} },
