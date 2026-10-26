@@ -109,6 +109,7 @@ struct Client {
 	unsigned int tags;
 	int isfixed, isfloating, isurgent, neverfocus, oldstate, isfullscreen, isdock;
 	int ishidden, isabove;
+	unsigned int ignoreunmaps;
 	unsigned long focused;
 	Client *next;
 	Client *snext;
@@ -882,6 +883,8 @@ clientmessage(XEvent *e)
 	if (!c || c->isdock)
 		return;
 	if (cme->message_type == netatom[NetWMState]) {
+		if (cme->format != 32 || cme->data.l[0] < 0 || cme->data.l[0] > 2)
+			return;
 		if (cme->data.l[1] == netatom[NetWMFullscreen]
 		|| cme->data.l[2] == netatom[NetWMFullscreen])
 			setfullscreen(c, (cme->data.l[0] == 1 /* _NET_WM_STATE_ADD    */
@@ -1712,9 +1715,16 @@ toggleabove(const Arg *arg)
 void
 hideclient(Client *c)
 {
+	XWindowAttributes wa;
+
 	if (!c || c->isdock || c->ishidden)
 		return;
 	c->ishidden = 1;
+	if (XGetWindowAttributes(dpy, c->win, &wa) && wa.map_state != IsUnmapped) {
+		/* We select StructureNotify on the client and SubstructureNotify on root. */
+		c->ignoreunmaps += 2;
+		XUnmapWindow(dpy, c->win);
+	}
 	setclientstate(c, IconicState);
 	updatestate(c);
 	if (c == selmon->sel)
@@ -1736,6 +1746,7 @@ restoreclient(Client *c)
 	if (!c || !c->ishidden)
 		return;
 	c->ishidden = 0;
+	XMapWindow(dpy, c->win);
 	setclientstate(c, NormalState);
 	updatestate(c);
 	arrange(c->mon);
@@ -1844,6 +1855,8 @@ maprequest(XEvent *e)
 		return;
 	if (!wintoclient(ev->window))
 		manage(ev->window, &wa);
+	else
+		restoreclient(wintoclient(ev->window));
 }
 
 void
@@ -2867,6 +2880,10 @@ unmapnotify(XEvent *e)
 		return;
 	}
 	if ((c = wintoclient(ev->window))) {
+		if (c->ignoreunmaps && !ev->send_event) {
+			c->ignoreunmaps--;
+			return;
+		}
 		if (ev->send_event)
 			setclientstate(c, WithdrawnState);
 		else
