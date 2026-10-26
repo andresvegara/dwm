@@ -66,7 +66,7 @@ enum { PlaceLeft = 1, PlaceRight = 2, PlaceTop = 4,
 enum { NetSupported, NetWMName, NetWMState, NetWMCheck,
        NetWMFullscreen, NetActiveWindow, NetWMWindowType,
        NetWMWindowTypeDialog, NetWMWindowTypeDock, NetClientList,
-       NetWMHidden, NetLast }; /* EWMH atoms */
+       NetWMHidden, NetWMAbove, NetLast }; /* EWMH atoms */
 enum { WMProtocols, WMDelete, WMState, WMTakeFocus, WMLast }; /* default atoms */
 enum { ClkTagBar, ClkLtSymbol, ClkStatusText, ClkWinTitle,
        ClkClientWin, ClkRootWin, ClkLast }; /* clicks */
@@ -108,7 +108,7 @@ struct Client {
 	int bw, oldbw;
 	unsigned int tags;
 	int isfixed, isfloating, isurgent, neverfocus, oldstate, isfullscreen, isdock;
-	int ishidden;
+	int ishidden, isabove;
 	Client *next;
 	Client *snext;
 	Monitor *mon;
@@ -199,6 +199,8 @@ static void minimize(const Arg *arg);
 static void hideclient(Client *c);
 static void restoreclient(Client *c);
 static void updatestate(Client *c);
+static void setabove(Client *c, int above);
+static void toggleabove(const Arg *arg);
 static void keypress(XEvent *e);
 static void killclient(const Arg *arg);
 static void manage(Window w, XWindowAttributes *wa);
@@ -625,6 +627,10 @@ clientmessage(XEvent *e)
 		|| cme->data.l[2] == netatom[NetWMFullscreen])
 			setfullscreen(c, (cme->data.l[0] == 1 /* _NET_WM_STATE_ADD    */
 				|| (cme->data.l[0] == 2 /* _NET_WM_STATE_TOGGLE */ && !c->isfullscreen)));
+		if (cme->data.l[1] == netatom[NetWMAbove]
+		|| cme->data.l[2] == netatom[NetWMAbove])
+			setabove(c, cme->data.l[0] == 1
+				|| (cme->data.l[0] == 2 && !c->isabove));
 	} else if (cme->message_type == wmchangeatom && cme->format == 32
 	&& cme->data.l[0] == IconicState) {
 		hideclient(c);
@@ -1185,20 +1191,40 @@ updatestate(Client *c)
 		False, XA_ATOM, &actual, &format, &n, &extra, &data) != Success
 	|| actual != XA_ATOM || format != 32 || extra)
 		n = 0;
-	states = ecalloc(n + 2, sizeof(Atom));
+	states = ecalloc(n + 3, sizeof(Atom));
 	for (i = 0; i < n; i++)
 		if (((Atom *)data)[i] != netatom[NetWMFullscreen]
-		&& ((Atom *)data)[i] != netatom[NetWMHidden])
+		&& ((Atom *)data)[i] != netatom[NetWMHidden]
+		&& ((Atom *)data)[i] != netatom[NetWMAbove])
 			states[count++] = ((Atom *)data)[i];
 	if (c->isfullscreen)
 		states[count++] = netatom[NetWMFullscreen];
 	if (c->ishidden)
 		states[count++] = netatom[NetWMHidden];
+	if (c->isabove)
+		states[count++] = netatom[NetWMAbove];
 	XChangeProperty(dpy, c->win, netatom[NetWMState], XA_ATOM, 32,
 		PropModeReplace, (unsigned char *)states, count);
 	if (data)
 		XFree(data);
 	free(states);
+}
+
+void
+setabove(Client *c, int above)
+{
+	if (!c || c->isdock)
+		return;
+	c->isabove = !!above;
+	updatestate(c);
+	restack(c->mon);
+}
+
+void
+toggleabove(const Arg *arg)
+{
+	if (selmon->sel)
+		setabove(selmon->sel, !selmon->sel->isabove);
 }
 
 void
@@ -1710,6 +1736,11 @@ restack(Monitor *m)
 	for (c = m->clients; c; c = c->next)
 		if (c->isdock && ISVISIBLE(c))
 			XRaiseWindow(dpy, c->win);
+	for (c = m->clients; c; c = c->next)
+		if (c->isabove && ISVISIBLE(c) && !c->isdock)
+			XRaiseWindow(dpy, c->win);
+	if (m->sel->isabove)
+		XRaiseWindow(dpy, m->sel->win);
 	if (m->showbar)
 		XRaiseWindow(dpy, m->barwin);
 	if (m->sel->isfullscreen)
@@ -1984,6 +2015,7 @@ setup(void)
 	netatom[NetWMWindowTypeDock] = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE_DOCK", False);
 	netatom[NetClientList] = XInternAtom(dpy, "_NET_CLIENT_LIST", False);
 	netatom[NetWMHidden] = XInternAtom(dpy, "_NET_WM_STATE_HIDDEN", False);
+	netatom[NetWMAbove] = XInternAtom(dpy, "_NET_WM_STATE_ABOVE", False);
 	/* init cursors */
 	cursor[CurNormal] = drw_cur_create(drw, XC_left_ptr);
 	cursor[CurResize] = drw_cur_create(drw, XC_sizing);
