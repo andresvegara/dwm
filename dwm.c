@@ -51,7 +51,7 @@
 #define CLEANMASK(mask)         (mask & ~(numlockmask|LockMask) & (ShiftMask|ControlMask|Mod1Mask|Mod2Mask|Mod3Mask|Mod4Mask|Mod5Mask))
 #define INTERSECT(x,y,w,h,m)    (MAX(0, MIN((x)+(w),(m)->wx+(m)->ww) - MAX((x),(m)->wx)) \
                                * MAX(0, MIN((y)+(h),(m)->wy+(m)->wh) - MAX((y),(m)->wy)))
-#define ISVISIBLE(C)            ((C->tags & C->mon->tagset[C->mon->seltags]))
+#define ISVISIBLE(C)            (((C)->tags & (C)->mon->tagset[(C)->mon->seltags]) && !(C)->ishidden)
 #define MOUSEMASK               (BUTTONMASK|PointerMotionMask)
 #define WIDTH(X)                ((X)->w + 2 * (X)->bw)
 #define HEIGHT(X)               ((X)->h + 2 * (X)->bw)
@@ -65,7 +65,8 @@ enum { PlaceLeft = 1, PlaceRight = 2, PlaceTop = 4,
        PlaceBottom = 8, PlaceMax = 16 }; /* window placement */
 enum { NetSupported, NetWMName, NetWMState, NetWMCheck,
        NetWMFullscreen, NetActiveWindow, NetWMWindowType,
-       NetWMWindowTypeDialog, NetWMWindowTypeDock, NetClientList, NetLast }; /* EWMH atoms */
+       NetWMWindowTypeDialog, NetWMWindowTypeDock, NetClientList,
+       NetWMHidden, NetLast }; /* EWMH atoms */
 enum { WMProtocols, WMDelete, WMState, WMTakeFocus, WMLast }; /* default atoms */
 enum { ClkTagBar, ClkLtSymbol, ClkStatusText, ClkWinTitle,
        ClkClientWin, ClkRootWin, ClkLast }; /* clicks */
@@ -107,6 +108,7 @@ struct Client {
 	int bw, oldbw;
 	unsigned int tags;
 	int isfixed, isfloating, isurgent, neverfocus, oldstate, isfullscreen, isdock;
+	int ishidden;
 	Client *next;
 	Client *snext;
 	Monitor *mon;
@@ -193,6 +195,10 @@ static int gettextprop(Window w, Atom atom, char *text, unsigned int size);
 static void grabbuttons(Client *c, int focused);
 static void grabkeys(void);
 static void incnmaster(const Arg *arg);
+static void minimize(const Arg *arg);
+static void hideclient(Client *c);
+static void restoreclient(Client *c);
+static void updatestate(Client *c);
 static void keypress(XEvent *e);
 static void killclient(const Arg *arg);
 static void manage(Window w, XWindowAttributes *wa);
@@ -290,7 +296,7 @@ static void (*handler[LASTEvent]) (XEvent *) = {
 	[SelectionClear] = selectionclear,
 	[UnmapNotify] = unmapnotify
 };
-static Atom wmatom[WMLast], netatom[NetLast], windowsetupatom, statuspidatom, themeatom;
+static Atom wmatom[WMLast], netatom[NetLast], windowsetupatom, statuspidatom, themeatom, wmchangeatom;
 static char windowsetup[SetupLength + 1];
 static int setuppending;
 static int running = 1;
@@ -619,7 +625,11 @@ clientmessage(XEvent *e)
 		|| cme->data.l[2] == netatom[NetWMFullscreen])
 			setfullscreen(c, (cme->data.l[0] == 1 /* _NET_WM_STATE_ADD    */
 				|| (cme->data.l[0] == 2 /* _NET_WM_STATE_TOGGLE */ && !c->isfullscreen)));
+	} else if (cme->message_type == wmchangeatom && cme->format == 32
+	&& cme->data.l[0] == IconicState) {
+		hideclient(c);
 	} else if (cme->message_type == netatom[NetActiveWindow]) {
+		restoreclient(c);
 		focus(c);
 		restack(c->mon);
 	}
@@ -925,7 +935,7 @@ expose(XEvent *e)
 void
 focus(Client *c)
 {
-	if (c && c->isdock)
+	if (c && (c->isdock || c->ishidden))
 		return;
 	if (c && c->mon != selmon) {
 		unfocus(selmon->sel, 0);
@@ -1160,6 +1170,67 @@ keypress(XEvent *e)
 		&& CLEANMASK(keys[i].mod) == CLEANMASK(ev->state)
 		&& keys[i].func)
 			keys[i].func(&(keys[i].arg));
+}
+
+/* Preserve states owned by applications when updating our EWMH flags. */
+void
+updatestate(Client *c)
+{
+	Atom actual = None, *states;
+	unsigned char *data = NULL;
+	unsigned long n = 0, extra, i, count = 0;
+	int format = 0;
+
+	if (XGetWindowProperty(dpy, c->win, netatom[NetWMState], 0, 1024,
+		False, XA_ATOM, &actual, &format, &n, &extra, &data) != Success
+	|| actual != XA_ATOM || format != 32 || extra)
+		n = 0;
+	states = ecalloc(n + 2, sizeof(Atom));
+	for (i = 0; i < n; i++)
+		if (((Atom *)data)[i] != netatom[NetWMFullscreen]
+		&& ((Atom *)data)[i] != netatom[NetWMHidden])
+			states[count++] = ((Atom *)data)[i];
+	if (c->isfullscreen)
+		states[count++] = netatom[NetWMFullscreen];
+	if (c->ishidden)
+		states[count++] = netatom[NetWMHidden];
+	XChangeProperty(dpy, c->win, netatom[NetWMState], XA_ATOM, 32,
+		PropModeReplace, (unsigned char *)states, count);
+	if (data)
+		XFree(data);
+	free(states);
+}
+
+void
+hideclient(Client *c)
+{
+	if (!c || c->isdock || c->ishidden)
+		return;
+	c->ishidden = 1;
+	setclientstate(c, IconicState);
+	updatestate(c);
+	if (c == selmon->sel)
+		focus(NULL);
+	else if (c == c->mon->sel)
+		c->mon->sel = NULL;
+	arrange(c->mon);
+}
+
+void
+minimize(const Arg *arg)
+{
+	hideclient(selmon->sel);
+}
+
+void
+restoreclient(Client *c)
+{
+	if (!c || !c->ishidden)
+		return;
+	c->ishidden = 0;
+	setclientstate(c, NormalState);
+	updatestate(c);
+	arrange(c->mon);
 }
 
 void
@@ -1811,9 +1882,8 @@ void
 setfullscreen(Client *c, int fullscreen)
 {
 	if (fullscreen && !c->isfullscreen) {
-		XChangeProperty(dpy, c->win, netatom[NetWMState], XA_ATOM, 32,
-			PropModeReplace, (unsigned char*)&netatom[NetWMFullscreen], 1);
 		c->isfullscreen = 1;
+		updatestate(c);
 		c->fullx = c->x;
 		c->fully = c->y;
 		c->fullw = c->w;
@@ -1825,9 +1895,8 @@ setfullscreen(Client *c, int fullscreen)
 		resizeclient(c, c->mon->mx, c->mon->my, c->mon->mw, c->mon->mh);
 		XRaiseWindow(dpy, c->win);
 	} else if (!fullscreen && c->isfullscreen){
-		XChangeProperty(dpy, c->win, netatom[NetWMState], XA_ATOM, 32,
-			PropModeReplace, (unsigned char*)0, 0);
 		c->isfullscreen = 0;
+		updatestate(c);
 		c->isfloating = c->oldstate;
 		c->bw = c->oldbw;
 		resizeclient(c, c->fullx, c->fully, c->fullw, c->fullh);
@@ -1902,6 +1971,7 @@ setup(void)
 	wmatom[WMProtocols] = XInternAtom(dpy, "WM_PROTOCOLS", False);
 	wmatom[WMDelete] = XInternAtom(dpy, "WM_DELETE_WINDOW", False);
 	wmatom[WMState] = XInternAtom(dpy, "WM_STATE", False);
+	wmchangeatom = XInternAtom(dpy, "WM_CHANGE_STATE", False);
 	wmatom[WMTakeFocus] = XInternAtom(dpy, "WM_TAKE_FOCUS", False);
 	netatom[NetActiveWindow] = XInternAtom(dpy, "_NET_ACTIVE_WINDOW", False);
 	netatom[NetSupported] = XInternAtom(dpy, "_NET_SUPPORTED", False);
@@ -1913,6 +1983,7 @@ setup(void)
 	netatom[NetWMWindowTypeDialog] = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE_DIALOG", False);
 	netatom[NetWMWindowTypeDock] = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE_DOCK", False);
 	netatom[NetClientList] = XInternAtom(dpy, "_NET_CLIENT_LIST", False);
+	netatom[NetWMHidden] = XInternAtom(dpy, "_NET_WM_STATE_HIDDEN", False);
 	/* init cursors */
 	cursor[CurNormal] = drw_cur_create(drw, XC_left_ptr);
 	cursor[CurResize] = drw_cur_create(drw, XC_sizing);
