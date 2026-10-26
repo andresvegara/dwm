@@ -937,7 +937,7 @@ clientmessage(XEvent *e)
 	} else if (cme->message_type == wmchangeatom && cme->format == 32
 	&& cme->data.l[0] == IconicState) {
 		hideclient(c);
-	} else if (cme->message_type == netatom[NetActiveWindow]) {
+	} else if (cme->message_type == netatom[NetActiveWindow] && cme->format == 32) {
 		restoreclient(c);
 		focus(c);
 		restack(c->mon);
