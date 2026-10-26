@@ -557,6 +557,14 @@ buttonpress(XEvent *e)
 	} else if ((c = titleclient(ev->window))) {
 		focus(c);
 		restack(selmon);
+		if (CLEANMASK(ev->state)) {
+			for (i = 0; i < LENGTH(buttons); i++)
+				if (buttons[i].click == ClkClientWin && buttons[i].func
+				&& buttons[i].button == ev->button
+				&& CLEANMASK(buttons[i].mask) == CLEANMASK(ev->state))
+					buttons[i].func(&buttons[i].arg);
+			return;
+		}
 		if (ev->button == Button1) {
 			c->pressedbutton = titlebutton(c, ev->x);
 			if (c->pressedbutton >= 0)
