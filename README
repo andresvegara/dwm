@@ -20,6 +20,13 @@ The remaining area shows ungrouped tasks for that monitor, including minimized
 windows. Click to activate/restore; click the focused task to minimize. Tags and
 layout indicators are hidden. Titlebars default to off; showtitlebar in config.h
 (or the config.def.h default) enables them after rebuilding.
+Applications can move their windows by dragging their own header or free tab-strip
+area when they send the standard _NET_WM_MOVERESIZE pointer-move request. No extra
+titlebar or Super key is needed. Maximized/snapped windows restore floating size
+under the pointer on actual motion; clicking alone does not restore them.
+Super+left-drag uses the same movement path and remains the fallback for clients
+without draggable headers. Fullscreen/docks/hidden windows are not moved.
+This supports pointer movement, not the EWMH resize or keyboard-movement directions.
 Status and the built-in XEmbed tray stay
 on the primary RandR monitor (first monitor fallback), not the focused monitor.
 The coordinator's docs/session.md describes the X11 session, snixembed SNI bridge,

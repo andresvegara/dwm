@@ -40,6 +40,17 @@ frames do not receive a visible titlebar. Placement includes titlebar space.
 Applications may request activation through
 _NET_ACTIVE_WINDOW; this permits external run-or-raise tools to focus windows.
 .P
+Applications can request pointer movement through _NET_WM_MOVERESIZE by dragging
+their own header or a draggable free area alongside tabs, without holding Super.
+This is general application support, not a browser-specific rule. Arbitrary empty
+content is not made draggable. EWMH resize and keyboard-movement directions are
+not implemented; Super-mouse resizing remains available.
+Maximized or snapped windows restore their floating size under the pointer on
+actual drag motion. Clicking alone keeps the current placement. Fullscreen,
+docks and hidden windows do not move. Release the left button to finish; an
+application's cancel request stops movement at its current position. Monitor
+changes end the drag before the normal topology update is handled.
+.P
 Drag a titlebar to move its window; double-click to maximize or restore.
 Unmodified right-click opens a window action menu, including always-on-top.
 Super-right-click resizes instead, including on the titlebar. Buttons act on
