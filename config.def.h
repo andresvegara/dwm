@@ -48,7 +48,7 @@ static const char *dmenucmd[] = {
 	"wm-launcher", "-m", dmenumon, NULL
 };
 static const char *commandcmd[] = { "wm-command", "-m", dmenumon, NULL };
-static const char *windowcmd[] = { "wm-launcher", "--windows", NULL };
+static const char *helpcmd[] = { "wm-launcher", "--shortcuts", NULL };
 static const char *menucmd[] = { "wm-launcher", "--session-menu", NULL };
 static const char *termcmd[] = { "jumpapp", "-n", "alacritty", NULL };
 static const char *browsercmd[] = { "jumpapp", "-n", "brave", NULL };
@@ -98,8 +98,11 @@ static const Key keys[] = {
 	{ MODKEY,            XK_ntilde,    centerclient,     {0} },
 	{ MODKEY|ShiftMask,  XK_Left,      tagmon,           {.i = -1 } },
 	{ MODKEY|ShiftMask,  XK_Right,     tagmon,           {.i = +1 } },
-	{ Mod1Mask,          XK_Tab,       spawn,            {.v = windowcmd } },
-	{ Mod1Mask|ShiftMask,XK_Tab,       spawn,            {.v = windowcmd } },
+	{ Mod1Mask,          XK_Tab,       alttab,           {.i = +1 } },
+	{ Mod1Mask|ShiftMask,XK_Tab,       alttab,           {.i = -1 } },
+	{ MODKEY,            XK_h,         minimize,         {0} },
+	{ MODKEY,            XK_t,         toggleabove,      {0} },
+	{ MODKEY,            XK_F1,        spawn,            {.v = helpcmd } },
 	{ MODKEY,            XK_Escape,    spawn,            {.v = menucmd } },
 	{ MODKEY,            XK_q,         killclient,       {0} },
 	{ ControlMask,       XK_q,         killclient,       {0} },
