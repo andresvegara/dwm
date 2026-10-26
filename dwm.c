@@ -20,6 +20,7 @@
  *
  * To understand everything else, start reading main().
  */
+#include <ctype.h>
 #include <errno.h>
 #include <locale.h>
 #include <signal.h>
@@ -253,6 +254,7 @@ static void updatetitle(Client *c);
 static void updatewindowtype(Client *c);
 static void updatewmhints(Client *c);
 static void updatewindowsetup(void);
+static void updatetheme(void);
 static void view(const Arg *arg);
 static Client *wintoclient(Window w);
 static Monitor *wintomon(Window w);
@@ -288,7 +290,7 @@ static void (*handler[LASTEvent]) (XEvent *) = {
 	[SelectionClear] = selectionclear,
 	[UnmapNotify] = unmapnotify
 };
-static Atom wmatom[WMLast], netatom[NetLast], windowsetupatom, statuspidatom;
+static Atom wmatom[WMLast], netatom[NetLast], windowsetupatom, statuspidatom, themeatom;
 static char windowsetup[SetupLength + 1];
 static int setuppending;
 static int running = 1;
@@ -1433,6 +1435,11 @@ propertynotify(XEvent *e)
 		return;
 	}
 
+	if (ev->window == root && ev->atom == themeatom) {
+		if (ev->state != PropertyDelete)
+			updatetheme();
+		return;
+	}
 	if (ev->window == root && ev->atom == windowsetupatom) {
 		if (ev->state != PropertyDelete)
 			updatewindowsetup();
@@ -1885,6 +1892,7 @@ setup(void)
 	updategeom();
 	/* init atoms */
 	utf8string = XInternAtom(dpy, "UTF8_STRING", False);
+	themeatom = XInternAtom(dpy, "_WM_THEME", False);
 	windowsetupatom = XInternAtom(dpy, "_WM_DISPLAY_SETUP", False);
 	statuspidatom = XInternAtom(dpy, "_DWM_BLOCKS_PID", False);
 	wmatom[WMProtocols] = XInternAtom(dpy, "WM_PROTOCOLS", False);
@@ -2496,6 +2504,72 @@ updatewindowtype(Client *c)
 		c->bw = 0;
 		XSetWindowBorderWidth(dpy, c->win, 0);
 	}
+}
+
+static int
+themevalues(const char *value, char names[2][3][8])
+{
+	unsigned int i, j;
+
+	if (strlen(value) != 47)
+		return 0;
+	for (i = 0; i < 6; i++) {
+		if (value[i * 8] != '#' || (i < 5 && value[i * 8 + 7] != ' '))
+			return 0;
+		for (j = 1; j < 7; j++)
+			if (!isxdigit((unsigned char)value[i * 8 + j]))
+				return 0;
+	}
+	for (i = 0; i < 6; i++) {
+		memcpy(names[i / 3][i % 3], value + i * 8, 7);
+		names[i / 3][i % 3][7] = '\0';
+	}
+	return 1;
+}
+
+void
+updatetheme(void)
+{
+	Atom actual, utf8string = XInternAtom(dpy, "UTF8_STRING", False);
+	int format;
+	unsigned int i, j;
+	unsigned long count, remaining;
+	unsigned char *data = NULL;
+	char names[2][3][8];
+	const char *row[3];
+	Clr *updated[2];
+	Monitor *m;
+	Client *c;
+
+	if (XGetWindowProperty(dpy, root, themeatom, 0, 12, False, utf8string,
+		&actual, &format, &count, &remaining, &data) != Success)
+		return;
+	if (!data || actual != utf8string || format != 8 || count != 47
+	|| remaining || !themevalues((char *)data, names)) {
+		if (data)
+			XFree(data);
+		return;
+	}
+	XFree(data);
+	for (i = 0; i < 2; i++) {
+		for (j = 0; j < 3; j++)
+			row[j] = names[i][j];
+		updated[i] = drw_scm_create(drw, row, 3);
+	}
+	for (i = 0; i < 2; i++) {
+		for (j = 0; j < 3; j++)
+			XftColorFree(dpy, DefaultVisual(dpy, screen), DefaultColormap(dpy, screen), &scheme[i][j]);
+		free(scheme[i]);
+		scheme[i] = updated[i];
+	}
+	for (m = mons; m; m = m->next)
+		for (c = m->clients; c; c = c->next)
+			if (!c->isdock)
+				XSetWindowBorder(dpy, c->win, scheme[c == selmon->sel ? SchemeSel : SchemeNorm][ColBorder].pixel);
+	if (traywin)
+		XSetWindowBackground(dpy, traywin, scheme[SchemeNorm][ColBg].pixel);
+	updatesystray();
+	drawbars();
 }
 
 void
