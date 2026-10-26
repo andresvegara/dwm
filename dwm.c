@@ -109,6 +109,7 @@ struct Client {
 	unsigned int tags;
 	int isfixed, isfloating, isurgent, neverfocus, oldstate, isfullscreen, isdock;
 	int ishidden, isabove;
+	unsigned long focused;
 	Client *next;
 	Client *snext;
 	Monitor *mon;
@@ -202,6 +203,11 @@ static void updatestate(Client *c);
 static void setabove(Client *c, int above);
 static void toggleabove(const Arg *arg);
 static void keypress(XEvent *e);
+static void keyrelease(XEvent *e);
+static void alttab(const Arg *arg);
+static void drawswitcher(void);
+static void endswitcher(int activate);
+static void stepswitcher(int direction);
 static void killclient(const Arg *arg);
 static void manage(Window w, XWindowAttributes *wa);
 static void mappingnotify(XEvent *e);
@@ -290,6 +296,7 @@ static void (*handler[LASTEvent]) (XEvent *) = {
 	[Expose] = expose,
 	[FocusIn] = focusin,
 	[KeyPress] = keypress,
+	[KeyRelease] = keyrelease,
 	[MappingNotify] = mappingnotify,
 	[MapRequest] = maprequest,
 	[MotionNotify] = motionnotify,
@@ -302,6 +309,10 @@ static Atom wmatom[WMLast], netatom[NetLast], windowsetupatom, statuspidatom, th
 static char windowsetup[SetupLength + 1];
 static int setuppending;
 static int running = 1;
+static unsigned long focusserial;
+static Window switchwin, *switchitems;
+static size_t switchcount, switchindex;
+static Monitor *switchmon;
 static Cur *cursor[CurLast];
 static Clr **scheme;
 static Display *dpy;
@@ -477,6 +488,8 @@ buttonpress(XEvent *e)
 	Monitor *m;
 	XButtonPressedEvent *ev = &e->xbutton;
 
+	if (switchwin)
+		return;
 	if ((c = wintoclient(ev->window)) && c->isdock) {
 		XAllowEvents(dpy, ReplayPointer, CurrentTime);
 		return;
@@ -670,6 +683,8 @@ configurenotify(XEvent *e)
 
 	/* TODO: updategeom handling sucks, needs to be simplified */
 	if (ev->window == root) {
+		if (switchwin)
+			endswitcher(0);
 		if (ev->width <= 0 || ev->height <= 0)
 			return;
 
@@ -909,6 +924,8 @@ enternotify(XEvent *e)
 	Monitor *m;
 	XCrossingEvent *ev = &e->xcrossing;
 
+	if (switchwin)
+		return;
 	if ((ev->mode != NotifyNormal || ev->detail == NotifyInferior) && ev->window != root)
 		return;
 	c = wintoclient(ev->window);
@@ -934,6 +951,10 @@ expose(XEvent *e)
 	Monitor *m;
 	XExposeEvent *ev = &e->xexpose;
 
+	if (ev->window == switchwin) {
+		drawswitcher();
+		return;
+	}
 	if (ev->count == 0 && (m = wintomon(ev->window)))
 		drawbar(m);
 }
@@ -952,6 +973,8 @@ focus(Client *c)
 	if (selmon->sel && selmon->sel != c)
 		unfocus(selmon->sel, 0);
 	if (c) {
+		if (selmon->sel != c || !c->focused)
+			c->focused = ++focusserial;
 		if (c->isurgent)
 			seturgent(c, 0);
 		detachstack(c);
@@ -1171,11 +1194,155 @@ keypress(XEvent *e)
 
 	ev = &e->xkey;
 	keysym = XKeycodeToKeysym(dpy, (KeyCode)ev->keycode, 0);
+	if (switchwin) {
+		if (keysym == XK_Tab || keysym == XK_ISO_Left_Tab)
+			stepswitcher(ev->state & ShiftMask ? -1 : 1);
+		else if (keysym == XK_Escape)
+			endswitcher(0);
+		else if (keysym == XK_Return || keysym == XK_KP_Enter)
+			endswitcher(1);
+		return;
+	}
 	for (i = 0; i < LENGTH(keys); i++)
 		if (keysym == keys[i].keysym
 		&& CLEANMASK(keys[i].mod) == CLEANMASK(ev->state)
 		&& keys[i].func)
 			keys[i].func(&(keys[i].arg));
+}
+
+void
+keyrelease(XEvent *e)
+{
+	KeySym key;
+	KeyCode left, right;
+	char held[32];
+
+	if (!switchwin)
+		return;
+	key = XKeycodeToKeysym(dpy, e->xkey.keycode, 0);
+	if (key != XK_Alt_L && key != XK_Alt_R)
+		return;
+	XQueryKeymap(dpy, held);
+	left = XKeysymToKeycode(dpy, XK_Alt_L);
+	right = XKeysymToKeycode(dpy, XK_Alt_R);
+	if (!(left && (held[left / 8] & (1 << (left % 8))))
+	&& !(right && (held[right / 8] & (1 << (right % 8)))))
+		endswitcher(1);
+}
+
+void
+drawswitcher(void)
+{
+	Client *c;
+	size_t i, start, rows;
+	int w, rowh;
+	char label[320];
+
+	if (!switchwin || !switchcount)
+		return;
+	w = MIN(600, switchmon->ww);
+	rowh = bh + 8;
+	rows = MIN(switchcount, MAX(1, switchmon->wh / rowh));
+	start = switchindex / rows * rows;
+	rows = MIN(rows, switchcount - start);
+	XMoveResizeWindow(dpy, switchwin, switchmon->wx + (switchmon->ww - w) / 2,
+		switchmon->wy + (switchmon->wh - rows * rowh) / 2, w, rows * rowh);
+	drw_resize(drw, MAX(sw, w), MAX(bh, rows * rowh));
+	for (i = 0; i < rows; i++) {
+		c = wintoclient(switchitems[start + i]);
+		snprintf(label, sizeof label, "%s%s%s", c && c->ishidden ? "[min] " : "",
+			c && c->isabove ? "[top] " : "", c ? c->name : "");
+		drw_setscheme(drw, scheme[start + i == switchindex ? SchemeSel : SchemeNorm]);
+		drw_text(drw, 0, i * rowh, w, rowh, lrpad / 2, label, 0);
+	}
+	drw_map(drw, switchwin, 0, 0, w, rows * rowh);
+	XRaiseWindow(dpy, switchwin);
+}
+
+void
+stepswitcher(int direction)
+{
+	if (!switchcount)
+		return;
+	if (direction < 0)
+		switchindex = switchindex ? switchindex - 1 : switchcount - 1;
+	else
+		switchindex = (switchindex + 1) % switchcount;
+	drawswitcher();
+}
+
+void
+endswitcher(int activate)
+{
+	Client *c = NULL;
+
+	if (activate && switchcount)
+		c = wintoclient(switchitems[switchindex]);
+	if (switchwin) {
+		XUngrabKeyboard(dpy, CurrentTime);
+		XDestroyWindow(dpy, switchwin);
+	}
+	switchwin = None;
+	free(switchitems);
+	switchitems = NULL;
+	switchcount = switchindex = 0;
+	if (c) {
+		restoreclient(c);
+		focus(c);
+		restack(c->mon);
+	}
+	/* Discard crossings generated by removing the popup, not real motion. */
+	{
+		XEvent event;
+		while (XCheckMaskEvent(dpy, EnterWindowMask, &event));
+	}
+}
+
+void
+alttab(const Arg *arg)
+{
+	Monitor *m;
+	Client *c, *previous;
+	size_t n = 0, i, j;
+	XSetWindowAttributes wa = {0};
+
+	if (switchwin) {
+		stepswitcher(arg->i);
+		return;
+	}
+	for (m = mons; m; m = m->next)
+		for (c = m->clients; c; c = c->next)
+			if (!c->isdock && (c->tags & m->tagset[m->seltags]))
+				n++;
+	if (!n)
+		return;
+	if (XGrabKeyboard(dpy, root, False, GrabModeAsync, GrabModeAsync,
+		CurrentTime) != GrabSuccess)
+		return;
+	switchitems = ecalloc(n, sizeof(Window));
+	for (m = mons; m; m = m->next)
+		for (c = m->clients; c; c = c->next) {
+			if (c->isdock || !(c->tags & m->tagset[m->seltags]))
+				continue;
+			for (i = 0; i < switchcount; i++) {
+				previous = wintoclient(switchitems[i]);
+				if (c == selmon->sel || (previous != selmon->sel
+				&& c->focused > previous->focused))
+					break;
+			}
+			for (j = switchcount; j > i; j--)
+				switchitems[j] = switchitems[j - 1];
+			switchitems[i] = c->win;
+			switchcount++;
+		}
+	switchmon = selmon;
+	wa.override_redirect = True;
+	wa.event_mask = ExposureMask;
+	switchwin = XCreateWindow(dpy, root, 0, 0, 1, 1, 0, CopyFromParent,
+		InputOutput, CopyFromParent, CWOverrideRedirect|CWEventMask, &wa);
+	XMapRaised(dpy, switchwin);
+	switchindex = 0;
+	stepswitcher(arg->i);
 }
 
 /* Preserve states owned by applications when updating our EWMH flags. */
@@ -1382,7 +1549,7 @@ motionnotify(XEvent *e)
 	Monitor *m;
 	XMotionEvent *ev = &e->xmotion;
 
-	if (ev->window != root)
+	if (switchwin || ev->window != root)
 		return;
 	m = recttomon(ev->x_root, ev->y_root, 1, 1);
 	if (m != selmon) {
@@ -2289,7 +2456,22 @@ unmanage(Client *c, int destroyed)
 {
 	Monitor *m = c->mon;
 	XWindowChanges wc;
+	size_t i;
 
+	for (i = 0; i < switchcount; i++)
+		if (switchitems[i] == c->win) {
+			memmove(switchitems + i, switchitems + i + 1,
+				(--switchcount - i) * sizeof(Window));
+			if (!switchcount)
+				endswitcher(0);
+			else {
+				if (i < switchindex)
+					switchindex--;
+				switchindex %= switchcount;
+				drawswitcher();
+			}
+			break;
+		}
 	detach(c);
 	detachstack(c);
 	if (!destroyed) {
