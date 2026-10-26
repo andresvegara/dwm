@@ -6,9 +6,9 @@ dwm \- floating X window manager for the wm environment
 .RB [ \-v ]
 .SH DESCRIPTION
 This configuration uses one tag and floating windows by default.
-Focus follows the pointer across normal windows and monitors, including empty
-monitor backgrounds. Docks never receive keyboard focus. Pointer focus does not
-raise or relocate existing windows; clicking still raises them.
+Click to focus and raise normal windows. Pointer crossing and motion do not
+change keyboard focus or the active monitor; clicking a monitor background
+selects that monitor. Docks never receive keyboard focus.
 Keyboard placement affects only the focused window; it does not rearrange
 other windows into a tiled layout.
 .P
@@ -38,7 +38,8 @@ Applications may request activation through
 _NET_ACTIVE_WINDOW; this permits external run-or-raise tools to focus windows.
 .P
 Drag a titlebar to move its window; double-click to maximize or restore.
-Right-click opens a window action menu, including always-on-top. Buttons act on
+Unmodified right-click opens a window action menu, including always-on-top.
+Super-right-click resizes instead, including on the titlebar. Buttons act on
 release inside the original button; close still requests WM_DELETE_WINDOW.
 The bottom bar remains a selected-window title, not a tasklist.
 .SH OPTIONS
