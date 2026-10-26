@@ -269,8 +269,10 @@ drw_text(Drw *drw, int x, int y, unsigned int w, unsigned int h, unsigned int lp
 	if (!render) {
 		w = invert ? invert : ~invert;
 	} else {
-		XSetForeground(drw->dpy, drw->gc, drw->scheme[invert ? ColFg : ColBg].pixel);
-		XFillRectangle(drw->dpy, drw->drawable, drw->gc, x, y, w, h);
+		if (!(invert & 2)) {
+			XSetForeground(drw->dpy, drw->gc, drw->scheme[invert & 1 ? ColFg : ColBg].pixel);
+			XFillRectangle(drw->dpy, drw->drawable, drw->gc, x, y, w, h);
+		}
 		if (w < lpad)
 			return x + w;
 		d = XftDrawCreate(drw->dpy, drw->drawable,
@@ -331,7 +333,7 @@ drw_text(Drw *drw, int x, int y, unsigned int w, unsigned int h, unsigned int lp
 		if (utf8strlen) {
 			if (render) {
 				ty = y + (h - usedfont->h) / 2 + usedfont->xfont->ascent;
-				XftDrawStringUtf8(d, &drw->scheme[invert ? ColBg : ColFg],
+				XftDrawStringUtf8(d, &drw->scheme[invert & 1 ? ColBg : ColFg],
 				                  usedfont->xfont, x, ty, (XftChar8 *)utf8str, utf8strlen);
 			}
 			x += ew;

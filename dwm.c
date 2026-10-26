@@ -113,7 +113,9 @@ struct Client {
 	Client *next;
 	Client *snext;
 	Monitor *mon;
-	Window win;
+	Window win, titlebar;
+	Time titleclick;
+	int hoverbutton, pressedbutton;
 };
 
 typedef struct {
@@ -167,6 +169,16 @@ static void attach(Client *c);
 static void attachstack(Client *c);
 static void beginwindowsetup(void);
 static void buttonpress(XEvent *e);
+static void buttonrelease(XEvent *e);
+static void leavenotify(XEvent *e);
+static Client *titleclient(Window w);
+static int titleh(Client *c);
+static int titlebutton(Client *c, int x);
+static void createtitle(Client *c);
+static void drawtitle(Client *c);
+static void stacktitle(Client *c);
+static void inittitlecolors(int bluebird);
+static void windowmenu(Client *c);
 static void centerclient(const Arg *arg);
 static void centerfloating(Client *c);
 static void checkotherwm(void);
@@ -283,11 +295,15 @@ static char stext[1024], statusraw[1024];
 static int screen;
 static int sw, sh;           /* X display screen geometry width, height */
 static int bh;               /* bar height */
+static int th;               /* titlebar height */
+static Clr *titlecolors[2], *titlegradient[2];
 static int lrpad;            /* sum of left and right padding for text */
 static int (*xerrorxlib)(Display *, XErrorEvent *);
 static unsigned int numlockmask = 0;
 static void (*handler[LASTEvent]) (XEvent *) = {
 	[ButtonPress] = buttonpress,
+	[ButtonRelease] = buttonrelease,
+	[LeaveNotify] = leavenotify,
 	[ClientMessage] = clientmessage,
 	[ConfigureRequest] = configurerequest,
 	[ConfigureNotify] = configurenotify,
@@ -306,6 +322,7 @@ static void (*handler[LASTEvent]) (XEvent *) = {
 	[UnmapNotify] = unmapnotify
 };
 static Atom wmatom[WMLast], netatom[NetLast], windowsetupatom, statuspidatom, themeatom, wmchangeatom;
+static Atom motifatom, csdatom, frameatom;
 static char windowsetup[SetupLength + 1];
 static int setuppending;
 static int running = 1;
@@ -313,6 +330,8 @@ static unsigned long focusserial;
 static Window switchwin, *switchitems;
 static size_t switchcount, switchindex;
 static Monitor *switchmon;
+static Window switchtarget;
+static int switchmenu;
 static Cur *cursor[CurLast];
 static Clr **scheme;
 static Display *dpy;
@@ -393,13 +412,14 @@ applysizehints(Client *c, int *x, int *y, int *w, int *h, int interact)
 		if (*y + *h + 2 * c->bw <= m->wy)
 			*y = m->wy;
 	}
-	if (*h < bh)
-		*h = bh;
+	if (*h < bh + titleh(c))
+		*h = bh + titleh(c);
 	if (*w < bh)
 		*w = bh;
 	if (resizehints || c->isfloating || !c->mon->lt[c->mon->sellt]->arrange) {
 		if (!c->hintsvalid)
 			updatesizehints(c);
+		*h -= titleh(c);
 		/* see last two sentences in ICCCM 4.1.2.3 */
 		baseismin = c->basew == c->minw && c->baseh == c->minh;
 		if (!baseismin) { /* temporarily remove base dimensions */
@@ -429,6 +449,7 @@ applysizehints(Client *c, int *x, int *y, int *w, int *h, int interact)
 			*w = MIN(*w, c->maxw);
 		if (c->maxh)
 			*h = MIN(*h, c->maxh);
+		*h += titleh(c);
 	}
 	return *x != c->x || *y != c->y || *w != c->w || *h != c->h;
 }
@@ -488,8 +509,18 @@ buttonpress(XEvent *e)
 	Monitor *m;
 	XButtonPressedEvent *ev = &e->xbutton;
 
-	if (switchwin)
+	if (switchwin) {
+		if (switchmenu) {
+			if (ev->button == Button1 && ev->x >= 0
+			&& ev->x < MIN(600, switchmon->ww) && ev->y >= 0
+			&& ev->y < (int)switchcount * (bh + 8)) {
+				switchindex = ev->y / (bh + 8);
+				endswitcher(1);
+			} else
+				endswitcher(0);
+		}
 		return;
+	}
 	if ((c = wintoclient(ev->window)) && c->isdock) {
 		XAllowEvents(dpy, ReplayPointer, CurrentTime);
 		return;
@@ -522,6 +553,23 @@ buttonpress(XEvent *e)
 		}
 		else
 			click = ClkWinTitle;
+	} else if ((c = titleclient(ev->window))) {
+		focus(c);
+		restack(selmon);
+		if (ev->button == Button1) {
+			c->pressedbutton = titlebutton(c, ev->x);
+			if (c->pressedbutton >= 0)
+				drawtitle(c);
+			else if (c->titleclick && ev->time - c->titleclick <= 300) {
+				c->titleclick = 0;
+				togglemaximize(NULL);
+			} else {
+				c->titleclick = ev->time;
+				movemouse(NULL);
+			}
+		} else if (ev->button == Button3)
+			windowmenu(c);
+		return;
 	} else if ((c = wintoclient(ev->window))) {
 		focus(c);
 		restack(selmon);
@@ -532,6 +580,197 @@ buttonpress(XEvent *e)
 		if (click == buttons[i].click && buttons[i].func && buttons[i].button == ev->button
 		&& CLEANMASK(buttons[i].mask) == CLEANMASK(ev->state))
 			buttons[i].func(click == ClkTagBar && buttons[i].arg.i == 0 ? &arg : &buttons[i].arg);
+}
+
+int
+titleh(Client *c)
+{
+	return c->titlebar && !c->isfullscreen && !c->isdock ? th + 2 * c->bw : 0;
+}
+
+Client *
+titleclient(Window w)
+{
+	Monitor *m;
+	Client *c;
+
+	for (m = mons; m; m = m->next)
+		for (c = m->clients; c; c = c->next)
+			if (c->titlebar && c->titlebar == w)
+				return c;
+	return NULL;
+}
+
+int
+titlebutton(Client *c, int x)
+{
+	int start = c->w - 3 * th;
+
+	if (!th || start < th || x < start || x >= c->w)
+		return -1;
+	return (x - start) / th;
+}
+
+void
+createtitle(Client *c)
+{
+	Atom actual;
+	unsigned char *data = NULL;
+	unsigned long n, remaining;
+	int format, skip = 0;
+	XSetWindowAttributes wa = {0};
+	XClassHint hint = {"dwm-titlebar", "Dwm-titlebar"};
+
+	if (!th || c->titlebar || c->isdock
+	|| getatomprop(c, netatom[NetWMWindowType]) == netatom[NetWMWindowTypeDock])
+		return;
+	if (XGetWindowProperty(dpy, c->win, motifatom, 0, 5, False, AnyPropertyType,
+		&actual, &format, &n, &remaining, &data) == Success && data) {
+		if (format == 32 && n >= 3 && (((long *)data)[0] & 2))
+			skip = !(((long *)data)[2] & (1 | 8));
+		XFree(data);
+	}
+	data = NULL;
+	if (XGetWindowProperty(dpy, c->win, csdatom, 0, 4, False, XA_CARDINAL,
+		&actual, &format, &n, &remaining, &data) == Success && data) {
+		if (actual == XA_CARDINAL && format == 32 && n == 4 && !remaining)
+			skip = 1;
+		XFree(data);
+	}
+	if (skip)
+		return;
+	wa.override_redirect = True;
+	wa.event_mask = ButtonPressMask|ButtonReleaseMask|ExposureMask
+		|PointerMotionMask|EnterWindowMask|LeaveWindowMask;
+	c->titlebar = XCreateWindow(dpy, root, c->x, c->y, MAX(c->w, 1), th, c->bw,
+		CopyFromParent, InputOutput, CopyFromParent,
+		CWOverrideRedirect|CWEventMask, &wa);
+	c->hoverbutton = c->pressedbutton = -1;
+	XSetClassHint(dpy, c->titlebar, &hint);
+}
+
+void
+stacktitle(Client *c)
+{
+	XWindowChanges wc = {.sibling = c->win, .stack_mode = Above};
+
+	if (!c->titlebar)
+		return;
+	if (!titleh(c) || !ISVISIBLE(c))
+		XUnmapWindow(dpy, c->titlebar);
+	else {
+		XMapWindow(dpy, c->titlebar);
+		XConfigureWindow(dpy, c->titlebar, CWSibling|CWStackMode, &wc);
+	}
+}
+
+void
+inittitlecolors(int bluebird)
+{
+	const char *names[3];
+	char fg[8], bg[8], border[8], **gradient;
+	unsigned int state, row, channel, top, bottom, rgb, value;
+	XRenderColor color;
+
+	for (state = 0; state < 2; state++) {
+		if (titlecolors[state])
+			drw_scm_free(drw, titlecolors[state], 3);
+		if (titlegradient[state])
+			drw_scm_free(drw, titlegradient[state], th);
+		color = scheme[state][ColFg].color;
+		snprintf(fg, sizeof fg, "#%02x%02x%02x", color.red >> 8, color.green >> 8, color.blue >> 8);
+		color = scheme[state][ColBg].color;
+		snprintf(bg, sizeof bg, "#%02x%02x%02x", color.red >> 8, color.green >> 8, color.blue >> 8);
+		color = scheme[state][ColBorder].color;
+		snprintf(border, sizeof border, "#%02x%02x%02x", color.red >> 8, color.green >> 8, color.blue >> 8);
+		names[0] = bluebird ? (state ? "#f1f1f1" : "#93adc9") : fg;
+		names[1] = bluebird ? (state ? "#4e7aa9" : "#4e7aa7") : bg;
+		names[2] = bluebird ? "#385b80" : border;
+		titlecolors[state] = drw_scm_create(drw, names, 3);
+		top = bluebird ? (state ? 0x5c88b7 : 0x7294b7) : strtoul(bg + 1, NULL, 16);
+		bottom = bluebird ? (state ? 0x4e7aa9 : 0x4e7aa7) : top;
+		gradient = ecalloc(th, sizeof(char *));
+		for (row = 0; row < (unsigned int)th; row++) {
+			rgb = 0;
+			for (channel = 0; channel < 3; channel++) {
+				value = (((top >> (8 * channel)) & 255) * (th - 1 - row)
+					+ ((bottom >> (8 * channel)) & 255) * row) / MAX(1, th - 1);
+				rgb |= value << (8 * channel);
+			}
+			gradient[row] = ecalloc(8, 1);
+			snprintf(gradient[row], 8, "#%06x", rgb);
+		}
+		titlegradient[state] = drw_scm_create(drw, (const char **)gradient, th);
+		for (row = 0; row < (unsigned int)th; row++)
+			free(gradient[row]);
+		free(gradient);
+	}
+}
+
+void
+drawtitle(Client *c)
+{
+	int state, y, i, buttons, width, padding;
+	Clr row[3];
+	const char *labels[] = {"−", c->placement & PlaceMax ? "▣" : "□", "×"};
+
+	if (!titleh(c) || !ISVISIBLE(c))
+		return;
+	state = c == selmon->sel && c->mon == selmon;
+	XSetWindowBorder(dpy, c->titlebar, titlecolors[state][ColBorder].pixel);
+	drw_resize(drw, MAX(sw, c->w), MAX(bh, th));
+	for (y = 0; y < th; y++) {
+		row[ColFg] = row[ColBg] = row[ColBorder] = titlegradient[state][y];
+		drw_setscheme(drw, row);
+		drw_rect(drw, 0, y, c->w, 1, 1, 0);
+	}
+	buttons = c->w >= 4 * th ? 3 * th : 0;
+	width = c->w - buttons;
+	padding = MAX(lrpad / 2, (c->w - (int)TEXTW(c->name) + lrpad) / 2);
+	padding = MIN(padding, MAX(0, width - lrpad));
+	drw_setscheme(drw, titlecolors[state]);
+	drw_text(drw, 0, 0, width, th, padding, c->name, 2);
+	for (i = 0; buttons && i < 3; i++)
+		drw_text(drw, width + i * th, 0, th, th,
+			MAX(0, (th - (int)TEXTW(labels[i]) + lrpad) / 2), labels[i],
+			c->pressedbutton == i || c->hoverbutton == i ? 1 : 2);
+	drw_map(drw, c->titlebar, 0, 0, c->w, th);
+}
+
+void
+buttonrelease(XEvent *e)
+{
+	Client *c = titleclient(e->xbutton.window);
+	int button;
+
+	if (!c || e->xbutton.button != Button1)
+		return;
+	button = c->pressedbutton;
+	c->pressedbutton = -1;
+	if (button < 0 || button != titlebutton(c, e->xbutton.x)
+	|| e->xbutton.y < 0 || e->xbutton.y >= th) {
+		drawtitle(c);
+		return;
+	}
+	focus(c);
+	if (button == 0)
+		hideclient(c);
+	else if (button == 1)
+		togglemaximize(NULL);
+	else
+		killclient(NULL);
+	drawtitle(c);
+}
+
+void
+leavenotify(XEvent *e)
+{
+	Client *c = titleclient(e->xcrossing.window);
+
+	if (c) {
+		c->hoverbutton = -1;
+		drawtitle(c);
+	}
 }
 
 void
@@ -579,6 +818,8 @@ cleanup(void)
 	Monitor *m;
 	size_t i;
 
+	if (switchwin)
+		endswitcher(0);
 	view(&a);
 	selmon->lt[selmon->sellt] = &foo;
 	for (m = mons; m; m = m->next)
@@ -593,6 +834,10 @@ cleanup(void)
 	for (i = 0; i < LENGTH(colors); i++)
 		drw_scm_free(drw, scheme[i], 3);
 	free(scheme);
+	for (i = 0; i < 2; i++) {
+		drw_scm_free(drw, titlecolors[i], 3);
+		drw_scm_free(drw, titlegradient[i], th);
+	}
 	XDestroyWindow(dpy, wmcheckwin);
 	drw_free(drw);
 	XSync(dpy, False);
@@ -664,9 +909,9 @@ configure(Client *c)
 	ce.event = c->win;
 	ce.window = c->win;
 	ce.x = c->x;
-	ce.y = c->y;
+	ce.y = c->y + titleh(c);
 	ce.width = c->w;
-	ce.height = c->h;
+	ce.height = MAX(1, c->h - titleh(c));
 	ce.border_width = c->bw;
 	ce.above = None;
 	ce.override_redirect = False;
@@ -757,7 +1002,7 @@ configurerequest(XEvent *e)
 			}
 			if (ev->value_mask & CWHeight) {
 				c->oldh = c->h;
-				c->h = ev->height;
+				c->h = MAX(1, ev->height) + titleh(c);
 			}
 			if ((c->x + c->w) > m->mx + m->mw && c->isfloating)
 				c->x = m->mx + (m->mw / 2 - WIDTH(c) / 2); /* center in x direction */
@@ -766,7 +1011,7 @@ configurerequest(XEvent *e)
 			if ((ev->value_mask & (CWX|CWY)) && !(ev->value_mask & (CWWidth|CWHeight)))
 				configure(c);
 			if (ISVISIBLE(c))
-				XMoveResizeWindow(dpy, c->win, c->x, c->y, c->w, c->h);
+				resizeclient(c, c->x, c->y, c->w, c->h);
 		} else
 			configure(c);
 	} else {
@@ -913,8 +1158,13 @@ drawbars(void)
 {
 	Monitor *m;
 
-	for (m = mons; m; m = m->next)
+	Client *c;
+
+	for (m = mons; m; m = m->next) {
 		drawbar(m);
+		for (c = m->clients; c; c = c->next)
+			drawtitle(c);
+	}
 }
 
 void
@@ -929,6 +1179,8 @@ enternotify(XEvent *e)
 	if ((ev->mode != NotifyNormal || ev->detail == NotifyInferior) && ev->window != root)
 		return;
 	c = wintoclient(ev->window);
+	if (!c)
+		c = titleclient(ev->window);
 	if (c)
 		m = c->mon;
 	else if (ev->window == root)
@@ -951,6 +1203,12 @@ expose(XEvent *e)
 	Monitor *m;
 	XExposeEvent *ev = &e->xexpose;
 
+	Client *c;
+
+	if ((c = titleclient(ev->window))) {
+		drawtitle(c);
+		return;
+	}
 	if (ev->window == switchwin) {
 		drawswitcher();
 		return;
@@ -1197,6 +1455,10 @@ keypress(XEvent *e)
 	if (switchwin) {
 		if (keysym == XK_Tab || keysym == XK_ISO_Left_Tab)
 			stepswitcher(ev->state & ShiftMask ? -1 : 1);
+		else if (keysym == XK_Up)
+			stepswitcher(-1);
+		else if (keysym == XK_Down)
+			stepswitcher(1);
 		else if (keysym == XK_Escape)
 			endswitcher(0);
 		else if (keysym == XK_Return || keysym == XK_KP_Enter)
@@ -1217,7 +1479,7 @@ keyrelease(XEvent *e)
 	KeyCode left, right;
 	char held[32];
 
-	if (!switchwin)
+	if (!switchwin || switchmenu)
 		return;
 	key = XKeycodeToKeysym(dpy, e->xkey.keycode, 0);
 	if (key != XK_Alt_L && key != XK_Alt_R)
@@ -1249,9 +1511,16 @@ drawswitcher(void)
 		switchmon->wy + (switchmon->wh - rows * rowh) / 2, w, rows * rowh);
 	drw_resize(drw, MAX(sw, w), MAX(bh, rows * rowh));
 	for (i = 0; i < rows; i++) {
-		c = wintoclient(switchitems[start + i]);
-		snprintf(label, sizeof label, "%s%s%s", c && c->ishidden ? "[min] " : "",
-			c && c->isabove ? "[top] " : "", c ? c->name : "");
+		if (switchmenu) {
+			const char *actions[] = {"Siempre encima", "Minimizar", "Maximizar/restaurar", "Cerrar"};
+			c = wintoclient(switchtarget);
+			snprintf(label, sizeof label, "%s%s", start + i == 0 && c && c->isabove ? "✓ " : "",
+				actions[start + i]);
+		} else {
+			c = wintoclient(switchitems[start + i]);
+			snprintf(label, sizeof label, "%s%s%s", c && c->ishidden ? "[min] " : "",
+				c && c->isabove ? "[top] " : "", c ? c->name : "");
+		}
 		drw_setscheme(drw, scheme[start + i == switchindex ? SchemeSel : SchemeNorm]);
 		drw_text(drw, 0, i * rowh, w, rowh, lrpad / 2, label, 0);
 	}
@@ -1275,14 +1544,19 @@ void
 endswitcher(int activate)
 {
 	Client *c = NULL;
+	int menu = switchmenu, action = switchindex;
 
 	if (activate && switchcount)
-		c = wintoclient(switchitems[switchindex]);
+		c = wintoclient(menu ? switchtarget : switchitems[switchindex]);
 	if (switchwin) {
+		if (menu)
+			XUngrabPointer(dpy, CurrentTime);
 		XUngrabKeyboard(dpy, CurrentTime);
 		XDestroyWindow(dpy, switchwin);
 	}
 	switchwin = None;
+	switchmenu = 0;
+	switchtarget = None;
 	free(switchitems);
 	switchitems = NULL;
 	switchcount = switchindex = 0;
@@ -1290,12 +1564,50 @@ endswitcher(int activate)
 		restoreclient(c);
 		focus(c);
 		restack(c->mon);
+		if (menu) {
+			if (action == 0)
+				setabove(c, !c->isabove);
+			else if (action == 1)
+				hideclient(c);
+			else if (action == 2)
+				togglemaximize(NULL);
+			else
+				killclient(NULL);
+		}
 	}
 	/* Discard crossings generated by removing the popup, not real motion. */
 	{
 		XEvent event;
 		while (XCheckMaskEvent(dpy, EnterWindowMask, &event));
 	}
+}
+
+void
+windowmenu(Client *c)
+{
+	XSetWindowAttributes wa = {0};
+
+	if (!c || c->isdock || switchwin)
+		return;
+	if (XGrabKeyboard(dpy, root, False, GrabModeAsync, GrabModeAsync,
+		CurrentTime) != GrabSuccess)
+		return;
+	switchmenu = 1;
+	switchtarget = c->win;
+	switchmon = c->mon;
+	switchcount = 4;
+	switchindex = 0;
+	wa.override_redirect = True;
+	wa.event_mask = ExposureMask|ButtonPressMask;
+	switchwin = XCreateWindow(dpy, root, 0, 0, 1, 1, 0, CopyFromParent,
+		InputOutput, CopyFromParent, CWOverrideRedirect|CWEventMask, &wa);
+	XMapRaised(dpy, switchwin);
+	if (XGrabPointer(dpy, switchwin, False, ButtonPressMask|ButtonReleaseMask,
+		GrabModeAsync, GrabModeAsync, None, None, CurrentTime) != GrabSuccess) {
+		endswitcher(0);
+		return;
+	}
+	drawswitcher();
 }
 
 void
@@ -1460,6 +1772,8 @@ manage(Window w, XWindowAttributes *wa)
 	}
 
 	c->bw = borderpx;
+	createtitle(c);
+	c->h = c->oldh = c->h + titleh(c);
 	updatewindowtype(c);
 	if (c->isdock)
 		c->mon = recttomon(c->x, c->y, c->w, c->h);
@@ -1487,7 +1801,8 @@ manage(Window w, XWindowAttributes *wa)
 	attachstack(c);
 	XChangeProperty(dpy, root, netatom[NetClientList], XA_WINDOW, 32, PropModeAppend,
 		(unsigned char *) &(c->win), 1);
-	XMoveResizeWindow(dpy, c->win, c->x + 2 * sw, c->y, c->w, c->h); /* some windows require this */
+	XMoveResizeWindow(dpy, c->win, c->x + 2 * sw, c->y + titleh(c),
+		c->w, MAX(1, c->h - titleh(c))); /* some windows require this */
 	setclientstate(c, NormalState);
 	if (!c->isdock) {
 		if (c->mon == selmon)
@@ -1548,7 +1863,13 @@ motionnotify(XEvent *e)
 {
 	Monitor *m;
 	XMotionEvent *ev = &e->xmotion;
+	Client *c = titleclient(ev->window);
 
+	if (c) {
+		c->hoverbutton = titlebutton(c, ev->x);
+		drawtitle(c);
+		return;
+	}
 	if (switchwin || ev->window != root)
 		return;
 	m = recttomon(ev->x_root, ev->y_root, 1, 1);
@@ -1582,7 +1903,6 @@ movemouse(const Arg *arg)
 		XUngrabPointer(dpy, CurrentTime);
 		return;
 	}
-	c->placement = 0;
 	do {
 		XMaskEvent(dpy, MOUSEMASK|ExposureMask|SubstructureRedirectMask, &ev);
 		switch(ev.type) {
@@ -1598,6 +1918,9 @@ movemouse(const Arg *arg)
 
 			nx = ocx + (ev.xmotion.x - x);
 			ny = ocy + (ev.xmotion.y - y);
+			if (nx == ocx && ny == ocy)
+				break;
+			c->placement = 0;
 			if (abs(selmon->wx - nx) < snap)
 				nx = selmon->wx;
 			else if (abs((selmon->wx + selmon->ww) - (nx + WIDTH(c))) < snap)
@@ -1735,6 +2058,7 @@ propertynotify(XEvent *e)
 			updatetitle(c);
 			if (c == c->mon->sel)
 				drawbar(c->mon);
+			drawtitle(c);
 		}
 		if (ev->atom == netatom[NetWMWindowType])
 			updatewindowtype(c);
@@ -1776,9 +2100,22 @@ resizeclient(Client *c, int x, int y, int w, int h)
 	c->oldx = c->x; c->x = wc.x = x;
 	c->oldy = c->y; c->y = wc.y = y;
 	c->oldw = c->w; c->w = wc.width = w;
-	c->oldh = c->h; c->h = wc.height = h;
+	c->oldh = c->h; c->h = MAX(h, titleh(c) + 1);
+	wc.height = c->h - titleh(c);
+	wc.y += titleh(c);
+	if (c->ishidden)
+		wc.x = -2 * WIDTH(c);
 	wc.border_width = c->bw;
 	XConfigureWindow(dpy, c->win, CWX|CWY|CWWidth|CWHeight|CWBorderWidth, &wc);
+	if (c->titlebar) {
+		unsigned long extents[] = {c->bw, c->bw, c->bw + titleh(c), c->bw};
+		XMoveResizeWindow(dpy, c->titlebar, c->x, c->y, MAX(1, c->w), th);
+		XSetWindowBorderWidth(dpy, c->titlebar, c->bw);
+		XChangeProperty(dpy, c->win, frameatom, XA_CARDINAL, 32,
+			PropModeReplace, (unsigned char *)extents, 4);
+		stacktitle(c);
+		drawtitle(c);
+	}
 	configure(c);
 	XSync(dpy, False);
 }
@@ -1912,6 +2249,10 @@ restack(Monitor *m)
 		XRaiseWindow(dpy, m->barwin);
 	if (m->sel->isfullscreen)
 		XRaiseWindow(dpy, m->sel->win);
+	for (c = m->clients; c; c = c->next)
+		stacktitle(c);
+	if (switchwin)
+		XRaiseWindow(dpy, switchwin);
 	XSync(dpy, False);
 	while (XCheckMaskEvent(dpy, EnterWindowMask, &ev));
 }
@@ -2160,10 +2501,14 @@ setup(void)
 		die("no fonts could be loaded.");
 	lrpad = drw->fonts->h;
 	bh = drw->fonts->h + 2;
+	th = MAX(24, bh);
 	updategeom();
 	/* init atoms */
 	utf8string = XInternAtom(dpy, "UTF8_STRING", False);
 	themeatom = XInternAtom(dpy, "_WM_THEME", False);
+	motifatom = XInternAtom(dpy, "_MOTIF_WM_HINTS", False);
+	csdatom = XInternAtom(dpy, "_GTK_FRAME_EXTENTS", False);
+	frameatom = XInternAtom(dpy, "_NET_FRAME_EXTENTS", False);
 	windowsetupatom = XInternAtom(dpy, "_WM_DISPLAY_SETUP", False);
 	statuspidatom = XInternAtom(dpy, "_DWM_BLOCKS_PID", False);
 	wmatom[WMProtocols] = XInternAtom(dpy, "WM_PROTOCOLS", False);
@@ -2191,6 +2536,7 @@ setup(void)
 	scheme = ecalloc(LENGTH(colors), sizeof(Clr *));
 	for (i = 0; i < LENGTH(colors); i++)
 		scheme[i] = drw_scm_create(drw, colors[i], 3);
+	inittitlecolors(!strcmp(colors[SchemeSel][ColBg], "#7e9ebd"));
 	randractive = XRRQueryExtension(dpy, &randrevent, &error)
 		&& XRRQueryVersion(dpy, &major, &minor)
 		&& (major > 1 || (major == 1 && minor >= 3));
@@ -2244,13 +2590,16 @@ showhide(Client *c)
 		return;
 	if (ISVISIBLE(c)) {
 		/* show clients top down */
-		XMoveWindow(dpy, c->win, c->x, c->y);
+		XMoveWindow(dpy, c->win, c->x, c->y + titleh(c));
+		stacktitle(c);
 		if ((!c->mon->lt[c->mon->sellt]->arrange || c->isfloating) && !c->isfullscreen)
 			resize(c, c->x, c->y, c->w, c->h, 0);
 		showhide(c->snext);
 	} else {
 		/* hide clients bottom up */
 		showhide(c->snext);
+		if (c->titlebar)
+			XUnmapWindow(dpy, c->titlebar);
 		XMoveWindow(dpy, c->win, WIDTH(c) * -2, c->y);
 	}
 }
@@ -2458,7 +2807,9 @@ unmanage(Client *c, int destroyed)
 	XWindowChanges wc;
 	size_t i;
 
-	for (i = 0; i < switchcount; i++)
+	if (switchmenu && switchtarget == c->win)
+		endswitcher(0);
+	for (i = 0; !switchmenu && i < switchcount; i++)
 		if (switchitems[i] == c->win) {
 			memmove(switchitems + i, switchitems + i + 1,
 				(--switchcount - i) * sizeof(Window));
@@ -2480,11 +2831,18 @@ unmanage(Client *c, int destroyed)
 		XSetErrorHandler(xerrordummy);
 		XSelectInput(dpy, c->win, NoEventMask);
 		XConfigureWindow(dpy, c->win, CWBorderWidth, &wc); /* restore border */
+		if (c->ishidden)
+			XMoveWindow(dpy, c->win, c->x, c->y + titleh(c));
 		XUngrabButton(dpy, AnyButton, AnyModifier, c->win);
 		setclientstate(c, WithdrawnState);
 		XSync(dpy, False);
 		XSetErrorHandler(xerror);
 		XUngrabServer(dpy);
+	}
+	if (c->titlebar) {
+		XDestroyWindow(dpy, c->titlebar);
+		if (!destroyed)
+			XDeleteProperty(dpy, c->win, frameatom);
 	}
 	free(c);
 	focus(NULL);
@@ -2851,6 +3209,7 @@ updatetheme(void)
 		free(scheme[i]);
 		scheme[i] = updated[i];
 	}
+	inittitlecolors(!strcmp(names[SchemeSel][ColBg], "#7e9ebd"));
 	for (m = mons; m; m = m->next)
 		for (c = m->clients; c; c = c->next)
 			if (!c->isdock)
@@ -2981,7 +3340,7 @@ wintomon(Window w)
 	for (m = mons; m; m = m->next)
 		if (w == m->barwin)
 			return m;
-	if ((c = wintoclient(w)))
+	if ((c = wintoclient(w)) || (c = titleclient(w)))
 		return c->mon;
 	return selmon;
 }
