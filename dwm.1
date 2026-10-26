@@ -28,8 +28,19 @@ area's top-left corner. Existing windows are not recentered on resize.
 Bluebird is the default palette. The external appearance helper can update
 bar and border colors through the private _WM_THEME property; malformed color
 lists are ignored. dwm itself does not manage GTK settings or theme persistence.
-Borders indicate focus. Applications may request activation through
+Titlebars and borders indicate focus. Normal decorated windows use a centered
+title and minimize, maximize/restore and close buttons. Bluebird uses a classic
+blue gradient, inspired by its Metacity theme, with original rendering rather
+than copied theme graphics. Other palettes recolor the titlebars.
+Docks/fullscreen and clients requesting no decorations or advertising GTK client
+frames do not receive a visible titlebar. Placement includes titlebar space.
+Applications may request activation through
 _NET_ACTIVE_WINDOW; this permits external run-or-raise tools to focus windows.
+.P
+Drag a titlebar to move its window; double-click to maximize or restore.
+Right-click opens a window action menu, including always-on-top. Buttons act on
+release inside the original button; close still requests WM_DELETE_WINDOW.
+The bottom bar remains a selected-window title, not a tasklist.
 .SH OPTIONS
 .TP
 .B \-v
@@ -87,9 +98,20 @@ Restore floating placement if needed, then center the window.
 Move to the previous or next monitor, retaining keyboard focus.
 .TP
 .B Alt\-Tab, Alt\-Shift\-Tab
-Open Rofi's external window selector. Both bindings open the same selector;
-use its navigation and confirm/cancel controls. This is not Awesome's native
-Alt-release MRU cycle.
+Cycle through a fixed recent-use list of windows on all monitors, including
+minimized windows. Tab advances; Shift-Tab goes backwards. Release Alt or press
+Return to activate and restore the selection without moving it to another monitor.
+Escape cancels. Closed windows leave the list; desktop geometry changes cancel it.
+.TP
+.B Super\-h
+Minimize the focused window. Recover it with Alt-Tab or Rofi's window selector.
+.TP
+.B Super\-t
+Toggle always-on-top, below the selected fullscreen window.
+.TP
+.B Super\-F1
+Show searchable shortcut help. It is also available in the external action menu.
+Selecting a help line never executes its text.
 .TP
 .B Super\-q, Control\-q, Alt\-F4
 Request WM_DELETE_WINDOW on the focused window. The application handles
