@@ -7,7 +7,7 @@ wm development configuration
 ----------------------------
 This checkout is an unactivated customization. Use make test from the parent
 wm directory, not make install or startx. It uses one tag, floating windows,
-pointer-following focus, per-window half/quarter placement, maximize/restore and ordinary
+click-only focus, per-window half/quarter placement, maximize/restore and ordinary
 close requests without killing unsupported clients. The manual documents the
 current bindings, including the Plasma-style Super+Home, Super+PageUp/PageDown,
 Super+End and Super+Shift+PageUp/PageDown media shortcuts. Session controls need
@@ -15,7 +15,12 @@ playerctl, wpctl (WirePlumber), brightnessctl, Flameshot and wm-launcher. Comman
 use direct argument vectors; no shell or separate hotkey daemon is involved.
 
 The native bar stays visible at the bottom of every monitor, reserving usable
-space; fullscreen windows may cover it. Status and the built-in XEmbed tray stay
+space; fullscreen windows may cover it. Inicio opens an extensible Rofi menu.
+The remaining area shows ungrouped tasks for that monitor, including minimized
+windows. Click to activate/restore; click the focused task to minimize. Tags and
+layout indicators are hidden. Titlebars default to off; showtitlebar in config.h
+(or the config.def.h default) enables them after rebuilding.
+Status and the built-in XEmbed tray stay
 on the primary RandR monitor (first monitor fallback), not the focused monitor.
 The coordinator's docs/session.md describes the X11 session, snixembed SNI bridge,
 clock, launcher, dependencies and coexistence with Plasma. dwm does not start the

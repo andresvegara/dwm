@@ -12,8 +12,9 @@ selects that monitor. Docks never receive keyboard focus.
 Keyboard placement affects only the focused window; it does not rearrange
 other windows into a tiled layout.
 .P
-The native bar is always visible at the bottom of every monitor, showing the
-tag, layout and selected window title. It reserves space for ordinary windows;
+The native bar is always visible at the bottom of every monitor, showing Inicio
+and one task button per window on that monitor, including minimized windows.
+Tags and layout symbols are not displayed. It reserves space for ordinary windows;
 fullscreen windows may cover it. There is no hide-bar binding.
 The primary RandR monitor also shows the status text and built-in XEmbed tray;
 without a valid primary output, the first monitor is used. The tray does not
@@ -28,7 +29,9 @@ area's top-left corner. Existing windows are not recentered on resize.
 Bluebird is the default palette. The external appearance helper can update
 bar and border colors through the private _WM_THEME property; malformed color
 lists are ignored. dwm itself does not manage GTK settings or theme persistence.
-Titlebars and borders indicate focus. Normal decorated windows use a centered
+Borders indicate focus. Titlebars default to disabled: set showtitlebar to 1 in
+config.h and rebuild to enable them (config.def.h supplies the default).
+When enabled, normal decorated windows use a centered
 title and minimize, maximize/restore and close buttons. Bluebird uses a classic
 blue gradient, inspired by its Metacity theme, with original rendering rather
 than copied theme graphics. Other palettes recolor the titlebars.
@@ -41,7 +44,12 @@ Drag a titlebar to move its window; double-click to maximize or restore.
 Unmodified right-click opens a window action menu, including always-on-top.
 Super-right-click resizes instead, including on the titlebar. Buttons act on
 release inside the original button; close still requests WM_DELETE_WINDOW.
-The bottom bar remains a selected-window title, not a tasklist.
+Click Inicio to open the extensible Rofi launcher at the lower left.
+Applications come from desktop entries; additional session actions can be defined
+in $XDG_CONFIG_HOME/wm/dwm/menu.json (default ~/.config/wm/dwm/menu.json).
+Click a task to focus/restore it, or click the focused task to minimize it.
+Tasks are not grouped; minimized titles have a [min] prefix and urgent tasks
+are highlighted. Titles share the available space and are truncated to fit.
 .SH OPTIONS
 .TP
 .B \-v
@@ -50,7 +58,7 @@ Print version information to stderr and exit.
 Super is the Windows key (Mod4). Alt is Mod1.
 .TP
 .B Super\-Space
-Open wm-launcher: Rofi applications, windows and fixed session actions.
+Open wm-launcher: Rofi applications, windows and extensible session actions.
 Power and logout actions require confirmation in the launcher.
 .TP
 .B Super\-d
@@ -105,7 +113,7 @@ Return to activate and restore the selection without moving it to another monito
 Escape cancels. Closed windows leave the list; desktop geometry changes cancel it.
 .TP
 .B Super\-h
-Minimize the focused window. Recover it with Alt-Tab or Rofi's window selector.
+Minimize the focused window. Recover it with its task button, Alt-Tab or Rofi.
 .TP
 .B Super\-t
 Toggle always-on-top, below the selected fullscreen window.
